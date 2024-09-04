@@ -1,0 +1,31 @@
+[project]
+name = "launch-inspector"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "aeon", email = "jerry73204@gmail.com" }
+]
+dependencies = [
+    "pyyaml>=6.0.2",
+    "lark>=1.2.2",
+    "packaging>=24.1",
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+
+[project.scripts]
+"launch-inspector" = "launch_inspector:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/launch_inspector"]

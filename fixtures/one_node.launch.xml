@@ -1,0 +1,5 @@
+<?xml version="1.0"?>
+<launch>
+  <node pkg="dummy_perception_publisher" exec="dummy_perception_publisher_node" name="dummy_perception_publisher" output="screen">
+  </node>
+</launch>
