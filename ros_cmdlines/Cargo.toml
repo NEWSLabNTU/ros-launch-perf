@@ -1,0 +1,11 @@
+[package]
+name = "ros_cmdlines"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eyre.workspace = true
+itertools = "0.13.0"
+serde.workspace = true
+shellwords = "1.1.0"
+url-escape = "0.1.1"

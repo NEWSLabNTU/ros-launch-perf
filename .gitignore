@@ -15,3 +15,8 @@ wheels/
 \#*#
 *.swp
 *.swo
+
+
+# Added by cargo
+
+/target
