@@ -1,5 +1,5 @@
 [project]
-name = "launch-inspector"
+name = "dump_launch"
 version = "0.1.0"
 description = "Add your description here"
 authors = [
@@ -14,7 +14,7 @@ readme = "README.md"
 requires-python = ">= 3.8"
 
 [project.scripts]
-"launch-inspector" = "launch_inspector:main"
+"dump_launch" = "dump_launch:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,4 +28,6 @@ dev-dependencies = []
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/launch_inspector"]
+packages = [
+    "src/dump_launch",
+]

@@ -64,7 +64,7 @@ class LaunchInspector:
         self.__argv = argv if argv is not None else []
 
         # Setup logging
-        self.__logger = launch.logging.get_logger("launch_inspector")
+        self.__logger = launch.logging.get_logger("dump_launch")
 
         # Setup context and register a built-in event handler for bootstrapping.
         self.__context = LaunchContext(argv=self.__argv, noninteractive=noninteractive)
