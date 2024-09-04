@@ -1,13 +1,19 @@
-from typing import List
-from typing import Optional
+from typing import List, Dict, Optional
 from typing import Text  # noqa: F401
 from typing import Tuple  # noqa: F401
 from dataclasses import dataclass
+from enum import Enum
+
+
+class ProcessKind(Enum):
+    COMPOSABLE_NODE_CONTAINER = "composable_node_container"
+    LIFECYCLE_NODE = "lifecycle_node"
+    NODE = "node"
+    UNKNOWN = "unknown"
+
 
 @dataclass
-class NodeDesc:
-    package: str
-    executable: str
-    name: str
-    namespace: str
-    remapping: Optional[List[Tuple[Text, Text]]]
+class ProcessInfo:
+    kind: Text
+    cmdline: List[Tuple[Text]]
+    file_data: Dict[Text, Text]

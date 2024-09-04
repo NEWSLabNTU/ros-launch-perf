@@ -1,5 +1,6 @@
 """Module for the LaunchInspector class."""
 
+import dataclasses
 import asyncio
 import collections.abc
 import contextlib
@@ -36,8 +37,10 @@ from launch_ros.actions.node import Node
 from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.actions.lifecycle_node import LifecycleNode
 
+from ros_cmdline import parse_ros_cmdline
+
 from .event_handlers import OnIncludeLaunchDescription
-from .desc import NodeDesc
+from .desc import ProcessKind, ProcessInfo
 
 
 class LaunchInspector:
@@ -93,10 +96,7 @@ class LaunchInspector:
         self.__return_code = 0
 
         # Used to collect executed nodes in this launch
-        self.__composable_node_containers: List[NodeDesc] = list()
-        self.__lifecycle_nodes: List[NodeDesc] = list()
-        self.__nodes: List[NodeDesc] = list()
-        self.__actions = list()
+        self.__process_info: List[ProcessInfo] = list()
 
     def emit_event(self, event: Event) -> None:
         """
@@ -426,48 +426,37 @@ class LaunchInspector:
         self.__logger.debug("which is triggeted by action: '{}'".format(action))
 
         if is_a(action, ComposableNodeContainer):
-            container = cast(ComposableNodeContainer, action)
-            # print("# ComposableNodeContainer: {}".format(container))
-            # desc = NodeDesc(
-            #     package=container.node_package,
-            #     executable=container.node_executable,
-            #     name=container.node_name,
-            #     namespace=container.expanded_node_namespace,
-            #     remapping=container.expanded_remapping_rules,
-            # )
-            self.__composable_node_containers.append(container)
-
+            kind = ProcessKind.COMPOSABLE_NODE_CONTAINER
         elif is_a(action, LifecycleNode):
-            node = cast(LifecycleNode, action)
-            # print("# LifecycleNode: {}".format(node))
-            # desc = NodeDesc(
-            #     package=node.node_package,
-            #     executable=node.node_executable,
-            #     name=node.node_name,
-            #     namespace=node.expanded_node_namespace,
-            #     remapping=node.expanded_remapping_rules,
-            # )
-            self.__lifecycle_nodes.append(node)
-
+            kind = ProcessKind.LIFECYCLE_NODE
         elif is_a(action, Node):
-            node = cast(Node, action)
-            # print("# Node: {}".format(node))
-            # desc = NodeDesc(
-            #     package=node.node_package,
-            #     executable=node.node_executable,
-            #     name=node.node_name,
-            #     namespace=node.expanded_node_namespace,
-            #     remapping=node.expanded_remapping_rules,
-            # )
-            self.__nodes.append(node)
-
+            kind = ProcessKind.NODE
         else:
-            self.__logger.info("Processed started by action: '{}'".format(action))
-            self.__actions.append(action)
+            kind = ProcessKind.UNKNOWN
+
+        cmdline = action.cmd
+        parse_cmdline = parse_ros_cmdline(cmdline)
+
+        file_data = dict()
+        for path in parse_cmdline.params_files:
+            with open(path, "r") as fp:
+                file_data[path] = fp.read()
+
+        if parse_cmdline.log_config_file is not None:
+            with open(parse_cmdline.log_config_file, "r") as fp:
+                file_data[parse_cmdline.log_config_file] = fp.read()
+
+        info = ProcessInfo(
+            kind=kind.value,
+            cmdline=cmdline,
+            file_data=file_data,
+        )
+        self.__process_info.append(info)
 
         # NOTE: explicitly kill the process
         # proc_started_event = cast(ProcessStarted, event)
         # os.kill(proc_started_event.pid, signal.SIGTERM)
+
         return None
 
     def __on_shutdown(
@@ -524,19 +513,20 @@ class LaunchInspector:
                 )
 
     def dump(self):
-        composable_node_containers = list(
-            action.cmd for action in self.__composable_node_containers
-        )
-        lifecycle_nodes = list(action.cmd for action in self.__lifecycle_nodes)
-        nodes = list(action.cmd for action in self.__nodes)
-        actions = list(action.cmd for action in self.__actions)
-        output = {
-            "composable_node_containers": composable_node_containers,
-            "lifecycle_nodes": lifecycle_nodes,
-            "nodes": nodes,
-            "actions": actions,
-        }
-        return output
+        # composable_node_containers = list(
+        #     action.cmd for action in self.__composable_node_containers
+        # )
+        # lifecycle_nodes = list(action.cmd for action in self.__lifecycle_nodes)
+        # nodes = list(action.cmd for action in self.__nodes)
+        # actions = list(action.cmd for action in self.__actions)
+        # output = {
+        #     "composable_node_containers": composable_node_containers,
+        #     "lifecycle_nodes": lifecycle_nodes,
+        #     "nodes": nodes,
+        #     "actions": actions,
+        # }
+        dump = list(dataclasses.asdict(info) for info in self.__process_info)
+        return dump
 
     @property
     def context(self):

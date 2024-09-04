@@ -30,4 +30,5 @@ allow-direct-references = true
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/dump_launch",
+    "src/ros_cmdline",
 ]

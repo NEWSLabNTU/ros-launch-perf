@@ -11,8 +11,8 @@
 
 -e file:.
 lark==1.2.2
-    # via launch-inspector
+    # via dump-launch
 packaging==24.1
-    # via launch-inspector
+    # via dump-launch
 pyyaml==6.0.2
-    # via launch-inspector
+    # via dump-launch
