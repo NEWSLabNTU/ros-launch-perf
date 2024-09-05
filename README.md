@@ -50,6 +50,17 @@ To replay the launch,
 just run_dump
 ```
 
+## Known Issues
+
+### Composable nodes are not recorded.
+
+The ROS2 launch provides the composable node container feature, which
+starts a special node as a container, and the container process
+receives composable node requests afterwards. Because the requests are
+sent to the container node, the launch system is unable to intercept
+the request directly. The affected elements are `<composable_node>`
+and `<load_composable_node>` in the launch file.
+
 ## License
 
 This software is distributed under MIT license. You can read the
