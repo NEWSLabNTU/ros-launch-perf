@@ -2,7 +2,7 @@ build:
     rye sync
     cargo build --release --all-targets
 
-record launch_file +params:
+record launch_file *params:
     rye run dump_launch -o dump.json {{launch_file}} {{params}}
 
 generate_script:
