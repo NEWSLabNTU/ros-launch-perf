@@ -29,7 +29,6 @@ from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.some_actions_type import SomeActionsType
 from launch.utilities import AsyncSafeSignalManager
-from launch.utilities import visit_all_entities_and_collect_futures
 from launch.utilities import is_a_subclass, is_a
 from launch_ros.actions.node import Node
 from launch_ros.actions.composable_node_container import ComposableNodeContainer
@@ -39,6 +38,7 @@ from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
 from .desc import ProcessKind, ProcessInfo, LaunchDump
+from .utilities import visit_recursive
 
 
 class LaunchInspector:
@@ -81,7 +81,9 @@ class LaunchInspector:
         )
 
         # Setup storage for state.
-        self._entity_future_pairs = []  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
+        self._entity_future_pairs = (
+            []
+        )  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
 
         # Used to allow asynchronous use of self.__loop_from_run_thread without
         # it being set to None by run() as it exits.
@@ -264,15 +266,10 @@ class LaunchInspector:
                                 entity
                             )
                         )
-                    pairs = visit_all_entities_and_collect_futures(
-                        entity, self.__context
-                    )
+
+                    pairs = visit_recursive(entity, self.__context)
 
                     for entity, future in pairs:
-                        # NOTE: Filter entities here
-                        # if is_a(entity, Node):
-                        #     continue
-
                         self._entity_future_pairs.append((entity, future))
 
                 self.__context._pop_locals()
