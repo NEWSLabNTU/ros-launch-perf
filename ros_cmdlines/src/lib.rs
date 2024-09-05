@@ -6,6 +6,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -188,7 +189,7 @@ impl CommandLine {
         Ok(())
     }
 
-    pub fn to_shell(&self, long_args: bool) -> String {
+    pub fn to_cmdline(&self, long_args: bool) -> Vec<String> {
         let Self {
             command,
             user_args,
@@ -284,10 +285,22 @@ impl CommandLine {
             user_args.iter().map(|arg| arg.as_str()),
             ros_args.iter().map(|arg| arg.borrow()),
         )
-        // .map(|word| shellwords::escape(word))
+        .map(|arg| arg.to_string())
         .collect();
 
-        // shellwords::join(&words)
-        words.join(" ")
+        words
+    }
+
+    pub fn to_command(&self, long_args: bool) -> Command {
+        let cmdline = self.to_cmdline(long_args);
+        let mut command = Command::new(&cmdline[0]);
+        command.args(&cmdline[1..]);
+        command
+    }
+
+    pub fn to_shell(&self, long_args: bool) -> String {
+        let words = self.to_cmdline(long_args);
+        let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
+        shellwords::join(&words)
     }
 }

@@ -6,10 +6,12 @@ edition = "2021"
 [dependencies]
 clap = { version = "4.5.16", features = ["derive"] }
 eyre.workspace = true
+futures = "0.3.30"
 itertools = "0.13.0"
 rayon = "1.10.0"
 ros_cmdlines = { version = "0.1.0", path = "../ros_cmdlines" }
 serde.workspace = true
 serde_json = "1.0.127"
 tempfile = "3.12.0"
+tokio = { version = "1.40.0", features = ["macros", "process", "rt-multi-thread", "time"] }
 url-escape = "0.1.1"
