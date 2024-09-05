@@ -9,7 +9,7 @@
 #   generate-hashes: false
 #   universal: false
 
--e file:.
+-e file:dump_launch
 lark==1.2.2
     # via dump-launch
 packaging==24.1
