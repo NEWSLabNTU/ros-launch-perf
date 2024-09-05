@@ -16,16 +16,14 @@ from typing import Optional
 from typing import Set  # noqa: F401
 from typing import Text
 from typing import Tuple  # noqa: F401
-from typing import cast
 
 import osrf_pycommon.process_utils
 
 import launch.logging
 from launch.event import Event
-from launch.event_handlers import OnShutdown, OnProcessStart
+from launch.event_handlers import OnShutdown, OnProcessStart, OnProcessExit
 from launch.events import IncludeLaunchDescription
 from launch.events import Shutdown
-from launch.events.process import ProcessStarted
 from launch.launch_context import LaunchContext
 from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -40,7 +38,7 @@ from launch_ros.actions.lifecycle_node import LifecycleNode
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
-from .desc import ProcessKind, ProcessInfo
+from .desc import ProcessKind, ProcessInfo, LaunchDump
 
 
 class LaunchInspector:
@@ -76,6 +74,9 @@ class LaunchInspector:
             OnProcessStart(on_start=self.__on_process_start)
         )
         self.__context.register_event_handler(
+            OnProcessExit(on_exit=self.__on_process_exit)
+        )
+        self.__context.register_event_handler(
             OnShutdown(on_shutdown=self.__on_shutdown)
         )
 
@@ -96,7 +97,7 @@ class LaunchInspector:
         self.__return_code = 0
 
         # Used to collect executed nodes in this launch
-        self.__process_info: List[ProcessInfo] = list()
+        self.__launch_dump: LaunchDump = LaunchDump(process=list(), file_data=dict())
 
     def emit_event(self, event: Event) -> None:
         """
@@ -435,9 +436,23 @@ class LaunchInspector:
             kind = ProcessKind.UNKNOWN
 
         cmdline = action.cmd
+        info = ProcessInfo(
+            kind=kind.value,
+            cmdline=cmdline,
+        )
+        self.__launch_dump.process.append(info)
+
+        return None
+
+    def __on_process_exit(
+        self, event: Event, context: LaunchContext
+    ) -> Optional[SomeActionsType]:
+        action = event.action
+        cmdline = action.cmd
         parse_cmdline = parse_ros_cmdline(cmdline)
 
-        file_data = dict()
+        file_data = self.__launch_dump.file_data
+
         for path in parse_cmdline.params_files:
             with open(path, "r") as fp:
                 file_data[path] = fp.read()
@@ -445,19 +460,6 @@ class LaunchInspector:
         if parse_cmdline.log_config_file is not None:
             with open(parse_cmdline.log_config_file, "r") as fp:
                 file_data[parse_cmdline.log_config_file] = fp.read()
-
-        info = ProcessInfo(
-            kind=kind.value,
-            cmdline=cmdline,
-            file_data=file_data,
-        )
-        self.__process_info.append(info)
-
-        # NOTE: explicitly kill the process
-        # proc_started_event = cast(ProcessStarted, event)
-        # os.kill(proc_started_event.pid, signal.SIGTERM)
-
-        return None
 
     def __on_shutdown(
         self, event: Event, context: LaunchContext
@@ -525,7 +527,7 @@ class LaunchInspector:
         #     "nodes": nodes,
         #     "actions": actions,
         # }
-        dump = list(dataclasses.asdict(info) for info in self.__process_info)
+        dump = dataclasses.asdict(self.__launch_dump)
         return dump
 
     @property

@@ -16,4 +16,9 @@ class ProcessKind(Enum):
 class ProcessInfo:
     kind: Text
     cmdline: List[Tuple[Text]]
+
+
+@dataclass
+class LaunchDump:
+    process: List[ProcessInfo]
     file_data: Dict[Text, Text]
