@@ -25,10 +25,8 @@ and analyze the launch execution.
 ## Usage
 
 1. Record a launch execution.
-
   This example runs a Autoware planning simulation. Press Ctrl-C to
   terminate the record. A `dump.json` will be created.
-
   ```sh
   just record \
     /path_to_autoware/src/launcher/autoware_launch/autoware_launch/launch/planning_simulator.launch.xml \
@@ -37,15 +35,11 @@ and analyze the launch execution.
   ```
 
 2. Analyze the dump file.
-
   To generate the shell scripts to replay the launch on the terminal,
-  
   ```sh
   just generate_script
   ```
-  
   To replay the launch,
-  
   ```sh
   just run_dump
   ```
