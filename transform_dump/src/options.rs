@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 pub enum Options {
     GenerateScript(GenerateScript),
-    Run(Run),
+    Play(Play),
 }
 
 #[derive(Parser)]
@@ -15,7 +15,7 @@ pub struct GenerateScript {
 }
 
 #[derive(Parser)]
-pub struct Run {
+pub struct Play {
     #[clap(long)]
     pub copy_params_dir: Option<PathBuf>,
     pub input_file: PathBuf,

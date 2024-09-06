@@ -7,8 +7,8 @@ record launch_file *params:
 
 generate_script:
     mkdir -p params
-    ./target/release/transform_dump generate-script --copy-params-dir params/ dump.json
+    cargo run --release --bin transform_dump -- generate-script --copy-params-dir params/ dump.json
 
-run_dump:
+play_dump:
     mkdir -p params
-    ./target/release/transform_dump run --copy-params-dir params/ dump.json
+    cargo run --release --bin transform_dump -- play --copy-params-dir params/ dump.json

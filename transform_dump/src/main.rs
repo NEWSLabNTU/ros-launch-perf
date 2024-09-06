@@ -25,7 +25,7 @@ fn main() -> eyre::Result<()> {
         Options::GenerateScript(opts) => {
             generate_shell(&opts)?;
         }
-        Options::Run(opts) => {
+        Options::Play(opts) => {
             Runtime::new()?.block_on(run(&opts))?;
         }
     }
@@ -63,7 +63,7 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn run(opts: &options::Run) -> eyre::Result<()> {
+async fn run(opts: &options::Play) -> eyre::Result<()> {
     let new_params_dir = match &opts.copy_params_dir {
         Some(dir) => Some(dir.canonicalize()?),
         None => None,
