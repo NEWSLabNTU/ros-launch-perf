@@ -39,19 +39,24 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
         None => None,
     };
 
-    let proc_info = load_and_transofmr_launch_dump(&opts.input_file, new_params_dir.as_deref())?;
+    let launch_dump = load_launch_dump(&opts.input_file)?;
 
-    let shells: Result<Vec<_>, _> = proc_info
+    let process_records =
+        load_and_transform_process_records(&launch_dump, new_params_dir.as_deref())?;
+    let process_shells = process_records
         .par_iter()
-        .map(|info| {
-            // Generate shell script
-            let shell = info.cmdline.to_shell(false);
-            eyre::Ok(shell)
-        })
-        .collect();
+        .map(|info| info.cmdline.to_shell(false));
+
+    let load_node_shells = launch_dump
+        .load_node
+        .par_iter()
+        .map(|request| request.to_shell());
+
+    let mut shells: Vec<_> = process_shells.chain(load_node_shells).collect();
+    shells.par_sort_unstable();
 
     println!("#!/bin/sh");
-    for shell in shells? {
+    for shell in shells {
         println!("{shell}");
     }
 
@@ -64,9 +69,11 @@ async fn run(opts: &options::Run) -> eyre::Result<()> {
         None => None,
     };
 
-    let proc_info = load_and_transofmr_launch_dump(&opts.input_file, new_params_dir.as_deref())?;
+    let launch_dump = load_launch_dump(&opts.input_file)?;
 
-    let commands: Result<Vec<_>, _> = proc_info
+    let process_records =
+        load_and_transform_process_records(&launch_dump, new_params_dir.as_deref())?;
+    let process_commands: Result<Vec<_>, _> = process_records
         .par_iter()
         .map(|info| {
             // Create a command object
@@ -78,54 +85,60 @@ async fn run(opts: &options::Run) -> eyre::Result<()> {
         .collect();
 
     // Unpack the outer Result.
-    let commands: Vec<_> = commands?;
+    let process_commands: Vec<_> = process_commands?;
 
-    // Separate containers and nodes.
-    let (containers, nodes): (Vec<_>, Vec<_>) = commands
-        .into_par_iter()
-        .partition(|(kind, _)| *kind == ProcessKind::ComposableNodeContainer);
-
-    // Create futures for execution.
-    let container_tasks: FuturesUnordered<_> = containers
+    let process_futures: FuturesUnordered<_> = process_commands
         .into_iter()
-        .map(|(_, mut command)| async move {
-            command.status().await?;
-            eyre::Ok(())
-        })
-        .collect();
-    let node_tasks: FuturesUnordered<_> = nodes
-        .into_iter()
-        .map(|(_, mut command)| async move {
-            command.status().await?;
-            eyre::Ok(())
-        })
+        .map(|(_kind, mut command)| command.status())
         .collect();
 
-    // Run the tasks and wait for completion.
+    let load_node_futures: FuturesUnordered<_> = launch_dump
+        .load_node
+        .iter()
+        .map(|request| request.to_command())
+        .map(|command| {
+            let mut command: tokio::process::Command = command.into();
+            command.kill_on_drop(true);
+            command
+        })
+        .map(|mut command| command.status())
+        .collect();
+
     try_join!(
-        container_tasks.try_for_each(|_| async move { Ok(()) }),
         async move {
-            // Wait for a short period to make sure the containers are
-            // ready.
-            tokio::time::sleep(Duration::from_millis(100)).await;
-
-            node_tasks.try_for_each(|_| async move { Ok(()) }).await?;
+            process_futures
+                .try_for_each(|_| futures::future::ok(()))
+                .await?;
             eyre::Ok(())
         },
+        async move {
+            // Postpone the load node commands to wait for containers
+            // to be ready.
+            tokio::time::sleep(Duration::from_millis(3000)).await;
+
+            load_node_futures
+                .try_for_each(|_| futures::future::ok(()))
+                .await?;
+            eyre::Ok(())
+        }
     )?;
 
     Ok(())
 }
 
-fn load_and_transofmr_launch_dump(
-    dump_file: &Path,
+fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
+    let reader = BufReader::new(File::open(dump_file)?);
+    let launch_dump = serde_json::from_reader(reader)?;
+    Ok(launch_dump)
+}
+
+fn load_and_transform_process_records(
+    launch_dump: &LaunchDump,
     new_params_dir: Option<&Path>,
-) -> eyre::Result<Vec<ProcessInfo>> {
-    // Load the launch dump file.
-    let LaunchDump { process, file_data } = {
-        let reader = BufReader::new(File::open(dump_file)?);
-        serde_json::from_reader(reader)?
-    };
+) -> eyre::Result<Vec<ProcessRecord>> {
+    let LaunchDump {
+        process, file_data, ..
+    } = launch_dump;
 
     let info: Result<Vec<_>, _> = process
         .par_iter()
@@ -155,7 +168,7 @@ fn load_and_transofmr_launch_dump(
                     .try_collect()?;
             }
 
-            eyre::Ok(ProcessInfo {
+            eyre::Ok(ProcessRecord {
                 kind: process.kind,
                 cmdline,
             })
@@ -166,7 +179,7 @@ fn load_and_transofmr_launch_dump(
 }
 
 #[derive(Debug, Clone)]
-struct ProcessInfo {
+struct ProcessRecord {
     pub kind: ProcessKind,
     pub cmdline: CommandLine,
 }

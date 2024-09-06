@@ -37,7 +37,7 @@ from launch_ros.actions.lifecycle_node import LifecycleNode
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
-from .desc import ProcessKind, ProcessInfo, LaunchDump
+from .dump import ProcessKind, ProcessRecord, LaunchDump
 from .utilities import visit_recursive
 
 
@@ -99,7 +99,9 @@ class LaunchInspector:
         self.__return_code = 0
 
         # Used to collect executed nodes in this launch
-        self.__launch_dump: LaunchDump = LaunchDump(process=list(), file_data=dict())
+        self.__launch_dump: LaunchDump = LaunchDump(
+            process=list(), load_node=list(), file_data=dict()
+        )
 
     def emit_event(self, event: Event) -> None:
         """
@@ -267,7 +269,7 @@ class LaunchInspector:
                             )
                         )
 
-                    pairs = visit_recursive(entity, self.__context)
+                    pairs = visit_recursive(entity, self.__context, self.__launch_dump)
 
                     for entity, future in pairs:
                         self._entity_future_pairs.append((entity, future))
@@ -433,7 +435,7 @@ class LaunchInspector:
             kind = ProcessKind.UNKNOWN
 
         cmdline = action.cmd
-        info = ProcessInfo(
+        info = ProcessRecord(
             kind=kind.value,
             cmdline=cmdline,
         )
