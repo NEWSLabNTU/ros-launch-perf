@@ -41,7 +41,7 @@ def visit_load_composable_nodes(
     if is_a_subclass(target_container, ComposableNodeContainer):
         load._LoadComposableNodes__final_target_container_name = target_container.node_name
     elif isinstance(target_container, SomeSubstitutionsType_types_tuple):
-        subs = normalize_to_list_of_substitutions(load.target_container)
+        subs = normalize_to_list_of_substitutions(target_container)
         load._LoadComposableNodes__final_target_container_name = perform_substitutions(
             context, subs)
     else:

@@ -14,6 +14,7 @@ from launch.launch_description_entity import LaunchDescriptionEntity
 from launch_ros.utilities import add_node_name
 from launch_ros.utilities import get_node_name_count
 
+from .execute_process import visit_execute_process
 from ..dump import LaunchDump
 
 
@@ -41,7 +42,7 @@ def visit_node(
         node.cmd.extend(cmd_extension)
 
     context.extend_locals({"ros_specific_arguments": ros_specific_arguments})
-    ret = ExecuteProcess.execute(node, context)
+    ret = visit_execute_process(node, context, dump)
 
     if node.is_node_name_fully_specified():
         add_node_name(context, node.node_name)

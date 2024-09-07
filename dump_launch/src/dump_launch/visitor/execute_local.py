@@ -77,24 +77,24 @@ def visit_execute_local(
     - create a task for the coroutine that monitors the process
     """
     process.prepare(context)
-    name = process.__process_description.final_name
+    name = process._ExecuteLocal__process_description.final_name
 
-    if process.__executed:
+    if process._ExecuteLocal__executed:
         raise RuntimeError(
             f"ExecuteLocal action '{name}': executed more than once: {process.describe()}"
         )
-    process.__executed = True
+    process._ExecuteLocal__executed = True
 
     if context.is_shutdown:
         # If shutdown starts before execution can start, don't start execution.
         return None
 
-    if process.__cached_output:
-        on_output_method = process.__on_process_output_cached
-        flush_buffers_method = process.__flush_cached_buffers
+    if process._ExecuteLocal__cached_output:
+        on_output_method = process._ExecuteLocal__on_process_output_cached
+        flush_buffers_method = process._ExecuteLocal__flush_cached_buffers
     else:
-        on_output_method = process.__on_process_output
-        flush_buffers_method = process.__flush_buffers
+        on_output_method = process._ExecuteLocal__on_process_output
+        flush_buffers_method = process._ExecuteLocal__flush_buffers
 
     event_handlers = [
         EventHandler(
@@ -144,7 +144,7 @@ def visit_execute_local(
         process._ExecuteLocal__logger = launch.logging.get_logger(name)
         if not isinstance(process._ExecuteLocal__output, dict):
             process._ExecuteLocal__output = perform_substitutions(
-                context, process.__output
+                context, process._ExecuteLocal__output
             )
         (
             process._ExecuteLocal__stdout_logger,
