@@ -38,7 +38,7 @@ from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
 from .dump import ProcessKind, ProcessRecord, LaunchDump
-from .utilities import visit_recursive
+from .visitor import visit_entity
 
 
 class LaunchInspector:
@@ -187,7 +187,6 @@ class LaunchInspector:
                     except asyncio.QueueEmpty:
                         break
                 self.__context._event_queue = new_queue
-
                 self.__loop_from_run_thread = this_loop
 
             # Get current task.
@@ -269,7 +268,7 @@ class LaunchInspector:
                             )
                         )
 
-                    pairs = visit_recursive(entity, self.__context, self.__launch_dump)
+                    pairs = visit_entity(entity, self.__context, self.__launch_dump)
 
                     for entity, future in pairs:
                         self._entity_future_pairs.append((entity, future))
