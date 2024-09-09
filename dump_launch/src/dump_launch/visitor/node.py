@@ -86,7 +86,9 @@ def visit_node(
             if is_file:
                 path = entry
                 with open(path, "r") as fp:
-                    params_files.append(fp.read())
+                    data = fp.read()
+                    params_files.append(data)
+                    dump.file_data[path] = data
             else:
                 assert is_a(entry, Parameter)
                 raise
