@@ -25,9 +25,9 @@ class NodeRecord:
     name: Optional[Text]
     namespace: Optional[Text]
     exec_name: Optional[Text]
-    params: Dict[Text, Any]
+    params: List[Tuple[Text, Text]]
     params_files: List[Text]
-    remaps: Dict[Text, Text]
+    remaps: List[Tuple[Text, Text]]
     ros_args: Optional[List[Text]]
     args: Optional[List[Text]]
     cmd: List[Text]
@@ -37,11 +37,12 @@ class NodeRecord:
 class LoadNodeRecord:
     package: Text
     plugin: Text
-    container_node_name: Text
+    target_container_name: Text
+    node_name: Text
     namespace: Text
     log_level: Optional[Text]
-    remaps: Dict[Text, Text]
-    parameters: Dict[Text, Text]
+    remaps: List[Tuple[Text, Text]]
+    parameters: List[Tuple[Text, Text]]
     extra_arguments: Dict[Text, Text]
 
 

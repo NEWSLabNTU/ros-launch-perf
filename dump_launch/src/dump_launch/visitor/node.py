@@ -78,7 +78,7 @@ def visit_node(
 
     # Extract parameters
     params_files = list()
-    params = dict()
+    params = list()
     node_params = node._Node__expanded_parameter_arguments
 
     if node_params is not None:
@@ -92,7 +92,7 @@ def visit_node(
                 raise
 
     if node.expanded_remapping_rules is None:
-        remaps = dict()
+        remaps = list()
     else:
         remaps = node.expanded_remapping_rules
 
