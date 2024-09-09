@@ -37,7 +37,7 @@ from launch_ros.actions.lifecycle_node import LifecycleNode
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
-from .dump import ProcessKind, ProcessRecord, LaunchDump
+from .dump import LaunchDump
 from .visitor import visit_entity
 
 
@@ -70,9 +70,9 @@ class LaunchInspector:
         # Setup context and register a built-in event handler for bootstrapping.
         self.__context = LaunchContext(argv=self.__argv, noninteractive=noninteractive)
         self.__context.register_event_handler(OnIncludeLaunchDescription())
-        self.__context.register_event_handler(
-            OnProcessStart(on_start=self.__on_process_start)
-        )
+        # self.__context.register_event_handler(
+        #     OnProcessStart(on_start=self.__on_process_start)
+        # )
         self.__context.register_event_handler(
             OnProcessExit(on_exit=self.__on_process_exit)
         )
@@ -100,7 +100,7 @@ class LaunchInspector:
 
         # Used to collect executed nodes in this launch
         self.__launch_dump: LaunchDump = LaunchDump(
-            process=list(), load_node=list(), file_data=dict()
+            load_node=list(), file_data=dict(), node=list()
         )
 
     def emit_event(self, event: Event) -> None:
@@ -416,31 +416,31 @@ class LaunchInspector:
             except KeyboardInterrupt:
                 continue
 
-    def __on_process_start(
-        self, event: Event, context: LaunchContext
-    ) -> Optional[SomeActionsType]:
-        action = event.action
+    # def __on_process_start(
+    #     self, event: Event, context: LaunchContext
+    # ) -> Optional[SomeActionsType]:
+    #     action = event.action
 
-        self.__logger.debug("perceived a process started event: '{}'".format(event))
-        self.__logger.debug("which is triggeted by action: '{}'".format(action))
+    #     self.__logger.debug("perceived a process started event: '{}'".format(event))
+    #     self.__logger.debug("which is triggeted by action: '{}'".format(action))
 
-        if is_a(action, ComposableNodeContainer):
-            kind = ProcessKind.COMPOSABLE_NODE_CONTAINER
-        elif is_a(action, LifecycleNode):
-            kind = ProcessKind.LIFECYCLE_NODE
-        elif is_a(action, Node):
-            kind = ProcessKind.NODE
-        else:
-            kind = ProcessKind.UNKNOWN
+    #     if is_a(action, ComposableNodeContainer):
+    #         kind = ProcessKind.COMPOSABLE_NODE_CONTAINER
+    #     elif is_a(action, LifecycleNode):
+    #         kind = ProcessKind.LIFECYCLE_NODE
+    #     elif is_a(action, Node):
+    #         kind = ProcessKind.NODE
+    #     else:
+    #         kind = ProcessKind.UNKNOWN
 
-        cmdline = action.cmd
-        info = ProcessRecord(
-            kind=kind.value,
-            cmdline=cmdline,
-        )
-        self.__launch_dump.process.append(info)
+    #     cmdline = action.cmd
+    #     info = ProcessRecord(
+    #         kind=kind.value,
+    #         cmdline=cmdline,
+    #     )
+    #     self.__launch_dump.process.append(info)
 
-        return None
+    #     return None
 
     def __on_process_exit(
         self, event: Event, context: LaunchContext

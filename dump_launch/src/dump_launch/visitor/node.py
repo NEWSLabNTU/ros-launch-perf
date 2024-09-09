@@ -1,27 +1,48 @@
-from typing import Iterable
 from typing import List
 from typing import Optional
-from typing import Text
-from typing import Tuple
-from typing import cast
 from typing import Dict
 
 
-from launch.actions import ExecuteProcess
 from launch_ros.actions.node import Node
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch_ros.utilities import add_node_name
 from launch_ros.utilities import get_node_name_count
+from launch.utilities import perform_substitutions, is_a
+from launch_ros.descriptions import Parameter
+from launch.utilities import normalize_to_list_of_substitutions
 
 from .execute_process import visit_execute_process
-from ..dump import LaunchDump
+from ..dump import LaunchDump, NodeRecord
 
 
 def visit_node(
     node: Node, context: LaunchContext, dump: LaunchDump
 ) -> Optional[List[LaunchDescriptionEntity]]:
     node._perform_substitutions(context)
+
+    def substitute(subst):
+        nonlocal context
+        return perform_substitutions(context, normalize_to_list_of_substitutions(subst))
+
+    executable = substitute(node.node_executable)
+    package = substitute(node.node_package)
+
+    if node._Node__ros_arguments is not None:
+        ros_args = list(substitute(subst) for subst in node._Node__ros_arguments)
+    else:
+        ros_args = None
+
+    if node._Node__arguments is not None:
+        args = list(substitute(subst) for subst in node._Node__arguments)
+    else:
+        args = None
+
+    if node.expanded_node_namespace == node.UNSPECIFIED_NODE_NAMESPACE:
+        namespace = None
+    else:
+        namespace = node.expanded_node_namespace
+
     # Prepare the ros_specific_arguments list and add it to the context so that the
     # LocalSubstitution placeholders added to the the cmd can be expanded using the contents.
     ros_specific_arguments: Dict[str, Union[str, List[str]]] = {}
@@ -40,8 +61,9 @@ def visit_node(
             context, ros_specific_arguments, node
         )
         node.cmd.extend(cmd_extension)
-
     context.extend_locals({"ros_specific_arguments": ros_specific_arguments})
+
+    # Visit ExecuteProcess
     ret = visit_execute_process(node, context, dump)
 
     if node.is_node_name_fully_specified():
@@ -53,5 +75,41 @@ def visit_node(
                 "there are now at least {} nodes with the name {} created within this "
                 "launch context".format(node_name_count, node.node_name)
             )
+
+    # Extract parameters
+    params_files = list()
+    params = dict()
+    node_params = node._Node__expanded_parameter_arguments
+
+    if node_params is not None:
+        for entry, is_file in node_params:
+            if is_file:
+                path = entry
+                with open(path, "r") as fp:
+                    params_files.append(fp.read())
+            else:
+                assert is_a(entry, Parameter)
+                raise
+
+    if node.expanded_remapping_rules is None:
+        remaps = dict()
+    else:
+        remaps = node.expanded_remapping_rules
+
+    # Store a node record
+    record = NodeRecord(
+        executable=executable,
+        package=package,
+        name=node._Node__expanded_node_name,
+        namespace=namespace,
+        exec_name=node.name,
+        cmd=node.cmd,
+        remaps=remaps,
+        params=params,
+        params_files=params_files,
+        ros_args=ros_args,
+        args=args,
+    )
+    dump.node.append(record)
 
     return ret

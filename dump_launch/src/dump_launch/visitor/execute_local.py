@@ -138,23 +138,23 @@ def visit_execute_local(
     for event_handler in event_handlers:
         context.register_event_handler(event_handler)
 
-    try:
-        process._ExecuteLocal__completed_future = create_future(context.asyncio_loop)
-        process._ExecuteLocal__shutdown_future = create_future(context.asyncio_loop)
-        process._ExecuteLocal__logger = launch.logging.get_logger(name)
-        if not isinstance(process._ExecuteLocal__output, dict):
-            process._ExecuteLocal__output = perform_substitutions(
-                context, process._ExecuteLocal__output
-            )
-        (
-            process._ExecuteLocal__stdout_logger,
-            process._ExecuteLocal__stderr_logger,
-        ) = launch.logging.get_output_loggers(name, process._ExecuteLocal__output)
-        context.asyncio_loop.create_task(
-            process._ExecuteLocal__execute_process(context)
-        )
-    except Exception:
-        for event_handler in event_handlers:
-            context.unregister_event_handler(event_handler)
-        raise
+    # try:
+    #     process._ExecuteLocal__completed_future = create_future(context.asyncio_loop)
+    #     process._ExecuteLocal__shutdown_future = create_future(context.asyncio_loop)
+    #     process._ExecuteLocal__logger = launch.logging.get_logger(name)
+    #     if not isinstance(process._ExecuteLocal__output, dict):
+    #         process._ExecuteLocal__output = perform_substitutions(
+    #             context, process._ExecuteLocal__output
+    #         )
+    #     (
+    #         process._ExecuteLocal__stdout_logger,
+    #         process._ExecuteLocal__stderr_logger,
+    #     ) = launch.logging.get_output_loggers(name, process._ExecuteLocal__output)
+    #     context.asyncio_loop.create_task(
+    #         process._ExecuteLocal__execute_process(context)
+    #     )
+    # except Exception:
+    #     for event_handler in event_handlers:
+    #         context.unregister_event_handler(event_handler)
+    #     raise
     return None
