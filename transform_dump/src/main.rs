@@ -5,7 +5,7 @@ use crate::options::Options;
 use clap::Parser;
 use futures::{stream::FuturesUnordered, try_join, TryStreamExt};
 use itertools::Itertools;
-use launch_dump::{LaunchDump, ProcessKind};
+use launch_dump::LaunchDump;
 use rayon::prelude::*;
 use ros_cmdlines::CommandLine;
 use std::{
@@ -80,7 +80,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             let mut command: tokio::process::Command = info.cmdline.to_command(false).into();
             command.kill_on_drop(true);
 
-            eyre::Ok((info.kind, command))
+            eyre::Ok(command)
         })
         .collect();
 
@@ -89,13 +89,16 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
 
     let process_futures: FuturesUnordered<_> = process_commands
         .into_iter()
-        .map(|(_kind, mut command)| command.status())
+        .map(|mut command| command.status())
         .collect();
 
     let load_node_futures: FuturesUnordered<_> = launch_dump
         .load_node
         .iter()
-        .map(|request| request.to_command())
+        .map(|request| {
+            eprintln!("{}", request.to_shell());
+            request.to_command()
+        })
         .map(|command| {
             let mut command: tokio::process::Command = command.into();
             command.kill_on_drop(true);
@@ -135,15 +138,15 @@ fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
 fn load_and_transform_process_records(
     launch_dump: &LaunchDump,
     new_params_dir: Option<&Path>,
-) -> eyre::Result<Vec<ProcessRecord>> {
+) -> eyre::Result<Vec<Execution>> {
     let LaunchDump {
-        process, file_data, ..
+        node, file_data, ..
     } = launch_dump;
 
-    let info: Result<Vec<_>, _> = process
+    let info: Result<Vec<_>, _> = node
         .par_iter()
         .map(|process| {
-            let mut cmdline = CommandLine::from_cmdline(&process.cmdline)?;
+            let mut cmdline = CommandLine::from_cmdline(&process.cmd)?;
 
             if let Some(params_dir) = &new_params_dir {
                 // Copy log_config_file to params dir.
@@ -168,10 +171,7 @@ fn load_and_transform_process_records(
                     .try_collect()?;
             }
 
-            eyre::Ok(ProcessRecord {
-                kind: process.kind,
-                cmdline,
-            })
+            eyre::Ok(Execution { cmdline })
         })
         .collect();
 
@@ -179,8 +179,7 @@ fn load_and_transform_process_records(
 }
 
 #[derive(Debug, Clone)]
-struct ProcessRecord {
-    pub kind: ProcessKind,
+struct Execution {
     pub cmdline: CommandLine,
 }
 

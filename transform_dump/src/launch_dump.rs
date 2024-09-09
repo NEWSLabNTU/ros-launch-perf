@@ -4,35 +4,60 @@ use std::{borrow::Cow, collections::HashMap, path::PathBuf, process::Command};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchDump {
-    pub process: Vec<ProcessRecord>,
+    // pub process: Vec<ProcessRecord>,
+    pub node: Vec<NodeRecord>,
     pub file_data: HashMap<PathBuf, String>,
     pub load_node: Vec<LoadNodeRecord>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProcessRecord {
-    pub kind: ProcessKind,
-    pub cmdline: Vec<String>,
+pub struct NodeRecord {
+    pub executable: String,
+    pub package: Option<String>,
+    pub name: Option<String>,
+    pub namespace: Option<String>,
+    pub exec_name: Option<String>,
+    #[serde(default)]
+    pub params: Vec<(String, ParameterValue)>,
+    pub params_files: Vec<String>,
+    #[serde(default)]
+    pub remaps: Vec<(String, String)>,
+    pub ros_args: Option<Vec<String>>,
+    pub args: Option<Vec<String>>,
+    pub cmd: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessKind {
-    ComposableNodeContainer,
-    LifecycleNode,
-    Node,
-    Unknown,
-}
+// #[derive(Debug, Clone, Deserialize)]
+// pub struct ProcessRecord {
+//     pub kind: ProcessKind,
+//     pub cmdline: Vec<String>,
+// }
+
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+// #[serde(rename_all = "snake_case")]
+// pub enum ProcessKind {
+//     ComposableNodeContainer,
+//     LifecycleNode,
+//     Node,
+//     Unknown,
+// }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoadNodeRecord {
     pub package: String,
     pub plugin: String,
-    pub container_node_name: String,
+    pub target_container_name: String,
+    pub node_name: String,
     pub namespace: String,
     pub log_level: Option<String>,
-    pub remaps: HashMap<String, String>,
-    pub parameters: HashMap<String, ParameterValue>,
+
+    #[serde(default)]
+    pub remaps: Vec<(String, String)>,
+
+    #[serde(default)]
+    pub parameters: Vec<(String, ParameterValue)>,
+
+    #[serde(default)]
     pub extra_arguments: HashMap<String, ParameterValue>,
 }
 
@@ -41,21 +66,24 @@ impl LoadNodeRecord {
         let Self {
             package,
             plugin,
-            container_node_name,
             namespace,
             log_level,
             remaps,
             parameters,
             extra_arguments,
+            target_container_name,
+            node_name,
         } = self;
 
         let command = [
             "ros2",
             "component",
             "load",
-            container_node_name,
+            target_container_name,
             package,
             plugin,
+            "-n",
+            node_name,
             "--node-namespace",
             namespace,
         ]
