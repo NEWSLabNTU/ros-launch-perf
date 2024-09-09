@@ -18,7 +18,7 @@ import lifecycle_msgs.srv
 
 
 from .node import visit_node
-from ..dump import LaunchDump
+from ..launch_dump import LaunchDump
 
 
 def visit_lifecycle_node(

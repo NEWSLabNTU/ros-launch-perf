@@ -17,7 +17,7 @@ from launch_ros.actions.node import Node
 from launch.events import ExecutionComplete  # noqa
 
 
-from ..dump import LaunchDump
+from ..launch_dump import LaunchDump
 from .load_composable_nodes import visit_load_composable_nodes
 from .lifecycle_node import visit_lifecycle_node
 from .node import visit_node

@@ -37,7 +37,7 @@ from launch_ros.actions.lifecycle_node import LifecycleNode
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
-from .dump import LaunchDump
+from .launch_dump import LaunchDump
 from .visitor import visit_entity
 
 

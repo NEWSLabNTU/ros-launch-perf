@@ -13,7 +13,7 @@ from launch_ros.descriptions import Parameter
 from launch.utilities import normalize_to_list_of_substitutions
 
 from .execute_process import visit_execute_process
-from ..dump import LaunchDump, NodeRecord
+from ..launch_dump import LaunchDump, NodeRecord
 
 
 def visit_node(

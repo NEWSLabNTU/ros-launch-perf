@@ -17,7 +17,7 @@ from launch_ros.actions.node import Node
 
 from .load_composable_nodes import visit_load_composable_nodes
 from .action import visit_action
-from ..dump import LaunchDump
+from ..launch_dump import LaunchDump
 
 
 def visit_entity(

@@ -9,7 +9,7 @@ from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 
 from .node import visit_node
-from ..dump import LaunchDump
+from ..launch_dump import LaunchDump
 
 
 def visit_composable_node_container(

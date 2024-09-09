@@ -29,7 +29,7 @@ from launch.some_substitutions_type import SomeSubstitutionsType_types_tuple
 
 import composition_interfaces.srv
 
-from ..dump import LaunchDump, LoadNodeRecord
+from ..launch_dump import LaunchDump, LoadNodeRecord
 
 
 def visit_load_composable_nodes(
