@@ -1,3 +1,4 @@
+import os
 import json
 from collections import OrderedDict
 import argparse
@@ -18,7 +19,7 @@ def main() -> int:
     parser.add_argument("LAUNCH_FILE")
     parser.add_argument("LAUNCH_ARGS", nargs="*")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("-o", "--output")
+    parser.add_argument("-o", "--output", default="record.json")
     args = parser.parse_args()
 
     inspector = LaunchInspector(
@@ -39,11 +40,11 @@ def main() -> int:
     inspector.run(shutdown_when_idle=True)
     dump = inspector.dump()
 
-    if args.output is not None:
-        with open(args.output, "w") as fp:
-            json.dump(dump, fp, sort_keys=True, indent=4)
-    else:
-        print(json.dumps(dump, sort_keys=True, indent=4))
+    if os.path.exists(args.output):
+        raise f"file {args.output} already exists"
+
+    with open(args.output, "w") as fp:
+        json.dump(dump, fp, sort_keys=True, indent=4)
 
     return 0
 

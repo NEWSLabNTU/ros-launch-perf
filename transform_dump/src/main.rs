@@ -3,7 +3,7 @@ mod options;
 
 use crate::options::Options;
 use clap::Parser;
-use futures::{join, stream::FuturesUnordered, StreamExt, TryStreamExt};
+use futures::{join, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use launch_dump::LaunchDump;
 use rayon::prelude::*;
@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 fn main() -> eyre::Result<()> {
@@ -34,15 +35,10 @@ fn main() -> eyre::Result<()> {
 }
 
 fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
-    let new_params_dir = match &opts.copy_params_dir {
-        Some(dir) => Some(dir.canonicalize()?),
-        None => None,
-    };
-
+    let params_dir = TempDir::new()?;
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
-    let process_records =
-        load_and_transform_process_records(&launch_dump, new_params_dir.as_deref())?;
+    let process_records = load_and_transform_process_records(&launch_dump, params_dir.path())?;
     let process_shells = process_records
         .par_iter()
         .map(|info| info.cmdline.to_shell(false));
@@ -64,15 +60,10 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
 }
 
 async fn run(opts: &options::Play) -> eyre::Result<()> {
-    let new_params_dir = match &opts.copy_params_dir {
-        Some(dir) => Some(dir.canonicalize()?),
-        None => None,
-    };
-
+    let params_dir = TempDir::new()?;
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
-    let process_records =
-        load_and_transform_process_records(&launch_dump, new_params_dir.as_deref())?;
+    let process_records = load_and_transform_process_records(&launch_dump, params_dir.path())?;
     let process_commands: Result<Vec<_>, _> = process_records
         .par_iter()
         .map(|info| {
@@ -140,7 +131,7 @@ fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
 
 fn load_and_transform_process_records(
     launch_dump: &LaunchDump,
-    new_params_dir: Option<&Path>,
+    params_dir: &Path,
 ) -> eyre::Result<Vec<Execution>> {
     let LaunchDump {
         node, file_data, ..
@@ -151,28 +142,26 @@ fn load_and_transform_process_records(
         .map(|process| {
             let mut cmdline = CommandLine::from_cmdline(&process.cmd)?;
 
-            if let Some(params_dir) = &new_params_dir {
-                // Copy log_config_file to params dir.
-                if let Some(src_path) = &cmdline.log_config_file {
+            // Copy log_config_file to params dir.
+            if let Some(src_path) = &cmdline.log_config_file {
+                let Some(data) = file_data.get(src_path) else {
+                    todo!();
+                };
+                cmdline.log_config_file = Some(copy_file(src_path, params_dir, data)?);
+            }
+
+            // Copy params_file to params dir.
+            cmdline.params_files = cmdline
+                .params_files
+                .iter()
+                .map(|src_path| {
                     let Some(data) = file_data.get(src_path) else {
                         todo!();
                     };
-                    cmdline.log_config_file = Some(copy_file(src_path, params_dir, data)?);
-                }
-
-                // Copy params_file to params dir.
-                cmdline.params_files = cmdline
-                    .params_files
-                    .iter()
-                    .map(|src_path| {
-                        let Some(data) = file_data.get(src_path) else {
-                            todo!();
-                        };
-                        let tgt_path = copy_file(src_path, params_dir, data)?;
-                        eyre::Ok(tgt_path)
-                    })
-                    .try_collect()?;
-            }
+                    let tgt_path = copy_file(src_path, params_dir, data)?;
+                    eyre::Ok(tgt_path)
+                })
+                .try_collect()?;
 
             eyre::Ok(Execution { cmdline })
         })

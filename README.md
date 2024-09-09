@@ -52,13 +52,19 @@ just run_dump
 
 ## Known Issues
 
-### Racing among composable node containers and LoadNode requests
+### Racing Among Composable Node Containers and LoadNode Requests
 
 The ROS2 launch provides the composable node container feature, which
 starts a special node as a container, and the container process
 receives composable node requests afterwards. In cases that tens of
 node processes are spawned, the container may not be ready before
 LoadNode requests are sent due to heavy system load.
+
+### Incorrect Parameter Type
+
+The node parameters are recorded and are stored in the JSON dump. It
+is observed that the `just play_dump` may not correctly interpret the
+parameter type.
 
 ## License
 
