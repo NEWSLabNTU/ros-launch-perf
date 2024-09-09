@@ -3,7 +3,7 @@ mod options;
 
 use crate::options::Options;
 use clap::Parser;
-use futures::{stream::FuturesUnordered, try_join, TryStreamExt};
+use futures::{join, stream::FuturesUnordered, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use launch_dump::LaunchDump;
 use rayon::prelude::*;
@@ -95,10 +95,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
     let load_node_futures: FuturesUnordered<_> = launch_dump
         .load_node
         .iter()
-        .map(|request| {
-            eprintln!("{}", request.to_shell());
-            request.to_command()
-        })
+        .map(|request| request.to_command())
         .map(|command| {
             let mut command: tokio::process::Command = command.into();
             command.kill_on_drop(true);
@@ -107,12 +104,15 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
         .map(|mut command| command.status())
         .collect();
 
-    try_join!(
+    join!(
         async move {
             process_futures
-                .try_for_each(|_| futures::future::ok(()))
-                .await?;
-            eyre::Ok(())
+                .for_each(|result| async move {
+                    if let Err(err) = result {
+                        eprintln!("{err}");
+                    }
+                })
+                .await;
         },
         async move {
             // Postpone the load node commands to wait for containers
@@ -120,11 +120,14 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             tokio::time::sleep(Duration::from_millis(3000)).await;
 
             load_node_futures
-                .try_for_each(|_| futures::future::ok(()))
-                .await?;
-            eyre::Ok(())
+                .for_each(|result| async move {
+                    if let Err(err) = result {
+                        eprintln!("{err}");
+                    }
+                })
+                .await;
         }
-    )?;
+    );
 
     Ok(())
 }
