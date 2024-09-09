@@ -52,14 +52,13 @@ just run_dump
 
 ## Known Issues
 
-### Composable nodes are not recorded.
+### Racing among composable node containers and LoadNode requests
 
 The ROS2 launch provides the composable node container feature, which
 starts a special node as a container, and the container process
-receives composable node requests afterwards. Because the requests are
-sent to the container node, the launch system is unable to intercept
-the request directly. The affected elements are `<composable_node>`
-and `<load_composable_node>` in the launch file.
+receives composable node requests afterwards. In cases that tens of
+node processes are spawned, the container may not be ready before
+LoadNode requests are sent due to heavy system load.
 
 ## License
 
