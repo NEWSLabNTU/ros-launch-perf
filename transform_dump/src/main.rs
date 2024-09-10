@@ -3,6 +3,7 @@ mod options;
 
 use crate::options::Options;
 use clap::Parser;
+use eyre::{bail, Context};
 use futures::{join, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use launch_dump::LaunchDump;
@@ -36,7 +37,8 @@ fn main() -> eyre::Result<()> {
 
 fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
     let params_dir = TempDir::new()?;
-    let launch_dump = load_launch_dump(&opts.input_file)?;
+    let launch_dump = load_launch_dump(&opts.input_file)
+        .wrap_err_with(|| format!("unable to read launch file {}", opts.input_file.display()))?;
 
     let process_records = load_and_transform_process_records(&launch_dump, params_dir.path())?;
     let process_shells = process_records
@@ -145,9 +147,12 @@ fn load_and_transform_process_records(
             // Copy log_config_file to params dir.
             if let Some(src_path) = &cmdline.log_config_file {
                 let Some(data) = file_data.get(src_path) else {
-                    todo!();
+                    bail!(
+                        "unable to find cached content for parameters file {}",
+                        src_path.display()
+                    );
                 };
-                cmdline.log_config_file = Some(copy_file(src_path, params_dir, data)?);
+                cmdline.log_config_file = Some(copy_cached_data(src_path, params_dir, data)?);
             }
 
             // Copy params_file to params dir.
@@ -156,9 +161,12 @@ fn load_and_transform_process_records(
                 .iter()
                 .map(|src_path| {
                     let Some(data) = file_data.get(src_path) else {
-                        todo!();
+                        bail!(
+                            "unable to find cached content for parameters file {}",
+                            src_path.display()
+                        );
                     };
-                    let tgt_path = copy_file(src_path, params_dir, data)?;
+                    let tgt_path = copy_cached_data(src_path, params_dir, data)?;
                     eyre::Ok(tgt_path)
                 })
                 .try_collect()?;
@@ -176,10 +184,11 @@ struct Execution {
 }
 
 /// An utility function to copy saved data content to the new directory.
-fn copy_file(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
+fn copy_cached_data(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
     let file_name = url_escape::encode_component(src_path.to_str().unwrap());
     let file_name: &str = file_name.borrow();
     let tgt_path = tgt_dir.join(file_name);
-    fs::write(&tgt_path, data)?;
+    fs::write(&tgt_path, data)
+        .wrap_err_with(|| format!("unable to create parameters file {}", tgt_path.display()))?;
     eyre::Ok(tgt_path)
 }
