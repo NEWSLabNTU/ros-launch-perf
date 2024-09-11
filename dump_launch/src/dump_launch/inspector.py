@@ -21,7 +21,7 @@ import osrf_pycommon.process_utils
 
 import launch.logging
 from launch.event import Event
-from launch.event_handlers import OnShutdown, OnProcessStart, OnProcessExit
+from launch.event_handlers import OnShutdown, OnProcessExit
 from launch.events import IncludeLaunchDescription
 from launch.events import Shutdown
 from launch.launch_context import LaunchContext
@@ -29,10 +29,7 @@ from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.some_actions_type import SomeActionsType
 from launch.utilities import AsyncSafeSignalManager
-from launch.utilities import is_a_subclass, is_a
-from launch_ros.actions.node import Node
-from launch_ros.actions.composable_node_container import ComposableNodeContainer
-from launch_ros.actions.lifecycle_node import LifecycleNode
+from launch.utilities import is_a_subclass
 
 from ros_cmdline import parse_ros_cmdline
 
@@ -379,19 +376,6 @@ class LaunchInspector:
                     self.__logger.error("run task was canceled")
                     return_code = 1
                     break
-                except Exception as exc:
-                    msg = "Caught exception in launch (see debug for traceback): {}".format(
-                        exc
-                    )
-                    self.__logger.debug(traceback.format_exc())
-                    self.__logger.error(msg)
-                    ret = self._shutdown(reason=msg, due_to_sigint=False)
-                    if ret is not None:
-                        ret = await ret
-                    assert ret is None, ret
-                    return_code = 1
-                    # keep running to let things shutdown properly
-                    continue
             return return_code
 
     def run(self, *, shutdown_when_idle=True) -> int:
