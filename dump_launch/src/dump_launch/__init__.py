@@ -22,6 +22,17 @@ def main() -> int:
     parser.add_argument("-o", "--output", default="record.json")
     args = parser.parse_args()
 
+    output_file = args.output
+    if os.path.exists(output_file):
+        nth = 1
+        while True:
+            new_path = f"args.output.{nth}"
+            if not os.path.exists(new_path):
+                os.rename(output_file, new_path)
+                break
+            else:
+                nth += 1
+
     inspector = LaunchInspector(
         argv=args.LAUNCH_ARGS, noninteractive=True, debug=args.debug
     )
@@ -40,10 +51,7 @@ def main() -> int:
     inspector.run(shutdown_when_idle=True)
     dump = inspector.dump()
 
-    if os.path.exists(args.output):
-        raise f"file {args.output} already exists"
-
-    with open(args.output, "w") as fp:
+    with open(output_file, "w") as fp:
         json.dump(dump, fp, sort_keys=True, indent=4)
 
     return 0
