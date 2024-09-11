@@ -27,6 +27,15 @@ pub struct NodeRecord {
     pub cmd: Vec<String>,
 }
 
+impl NodeRecord {
+    pub fn to_shell(&self) -> String {
+        let words = self.cmd.iter();
+        let words: Vec<_> = words.map(|w| w.to_string()).collect();
+        let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
+        shellwords::join(&words)
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoadNodeRecord {
     pub package: String,
