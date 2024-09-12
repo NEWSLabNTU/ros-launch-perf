@@ -49,7 +49,7 @@ just generate_script
 To replay the launch,
 
 ```sh
-just run_dump
+just play_dump
 ```
 
 ## Known Issues
