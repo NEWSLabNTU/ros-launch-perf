@@ -5,15 +5,16 @@ mod options;
 use crate::{launch_dump::LoadNodeRecord, options::Options};
 use clap::Parser;
 use eyre::{bail, ensure, Context};
-use futures::{join, stream::FuturesUnordered, StreamExt};
+use futures::{join, stream::FuturesUnordered, StreamExt, TryStreamExt};
 use itertools::Itertools;
-use launch_dump::{LaunchDump, NodeRecord};
+use launch_dump::{ComposableNodeContainerRecord, LaunchDump, NodeRecord};
 use node_cmdline::NodeCommandLine;
-use rayon::{iter::Either, prelude::*};
+use rayon::prelude::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     fs::File,
+    future::Future,
     io::{self, prelude::*, BufReader},
     path::{Path, PathBuf, MAIN_SEPARATOR},
     process::{ExitStatus, Stdio},
@@ -68,6 +69,7 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
 }
 
 async fn run(opts: &options::Play) -> eyre::Result<()> {
+    let load_node_delay = Duration::from_millis(opts.delay_load_node_millis);
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
     // Prepare directories
@@ -84,9 +86,19 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
 
+    // Build a table of composable node containers
+    let container_names: HashSet<String> = launch_dump
+        .container
+        .par_iter()
+        .map(|record| {
+            let ComposableNodeContainerRecord { namespace, name } = record;
+            format!("{namespace}/{name}")
+        })
+        .collect();
+
     // Prepare node execution contexts
     let node_cmdlines = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
-    let node_tasks: Result<Vec<_>, _> = node_cmdlines
+    let node_commands: Result<Vec<_>, _> = node_cmdlines
         .into_par_iter()
         .map(|(record, cmdline)| {
             let Some(exec_name) = &record.exec_name else {
@@ -95,49 +107,41 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             let Some(package) = &record.package else {
                 bail!(r#"expect the "package" field but not found"#);
             };
-
             let output_dir = node_log_dir.join(package).join(exec_name);
-            ensure!(output_dir.is_relative());
-            let stdout_path = output_dir.join("out");
-            let stderr_path = output_dir.join("err");
-            let cmdline_path = output_dir.join("cmdline");
+            let exec = prepare_node_command(record, &cmdline, output_dir)?;
 
-            fs::create_dir_all(&output_dir)?;
-
-            {
-                let mut cmdline_file = File::create(cmdline_path)?;
-                cmdline_file.write_all(&cmdline.to_shell(false))?;
-            }
-
-            let stdout_file = File::create(stdout_path)?;
-            let stderr_file = File::create(&stderr_path)?;
-
-            let mut command: tokio::process::Command = cmdline.to_command(false).into();
-            command.kill_on_drop(true);
-            command.stdin(Stdio::null());
-            command.stdout(stdout_file);
-            command.stderr(stderr_file);
-
-            let task = async move {
-                let mut child = command.spawn()?;
-                let status = child.wait().await?;
-                let log_name = format!("NODE {package} {exec_name}");
-                save_status(&status, &output_dir, &log_name)?;
-
-                eyre::Ok(())
-            };
-
-            eyre::Ok(task)
+            eyre::Ok((record, cmdline, exec))
         })
         .collect();
-    let node_tasks = node_tasks?;
+    let node_commands = node_commands?;
+
+    let (container_commands, pure_node_commands): (Vec<(String, _)>, Vec<_>) = node_commands
+        .into_par_iter()
+        .partition_map(|(record, cmdline, exec)| {
+            use rayon::iter::Either;
+
+            let NodeRecord {
+                namespace, name, ..
+            } = record;
+
+            match (namespace, name) {
+                (Some(namespace), Some(name)) => {
+                    let container_key = format!("{namespace}/{name}");
+                    if container_names.contains(&container_key) {
+                        Either::Left((container_key, (record, cmdline, exec)))
+                    } else {
+                        Either::Right((record, cmdline, exec))
+                    }
+                }
+                _ => Either::Right((record, cmdline, exec)),
+            }
+        });
 
     // Prepare LoadNode request execution contexts
     let load_node_records = &launch_dump.load_node;
-    let load_node_tasks: Result<Vec<_>, _> = load_node_records
+    let load_node_commands: Result<Vec<_>, _> = load_node_records
         .par_iter()
         .map(|record| {
-            let command = record.to_command();
             let LoadNodeRecord {
                 package,
                 plugin,
@@ -148,68 +152,151 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                 .join(target_container_name.replace("/", "!"))
                 .join(package)
                 .join(plugin);
-            let stdout_path = output_dir.join("out");
-            let stderr_path = output_dir.join("err");
-            let cmdline_path = output_dir.join("cmdline");
-
-            fs::create_dir_all(&output_dir)?;
-
-            {
-                let mut cmdline_file = File::create(cmdline_path)?;
-                cmdline_file.write_all(&record.to_shell())?;
-            }
-
-            let stdout_file = File::create(stdout_path)?;
-            let stderr_file = File::create(&stderr_path)?;
-
-            let mut command: tokio::process::Command = command.into();
-            command.kill_on_drop(true);
-            command.stdin(Stdio::null());
-            command.stdout(stdout_file);
-            command.stderr(stderr_file);
-
-            let task = async move {
-                let mut child = command.spawn()?;
-                let status = child.wait().await?;
-                let log_name =
-                    format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
-                save_status(&status, &output_dir, &log_name)?;
-
-                eyre::Ok(())
-            };
-
-            eyre::Ok(task)
+            let exec = prepare_load_node_command(record, output_dir)?;
+            eyre::Ok((record, exec))
         })
         .collect();
-    let load_node_tasks = load_node_tasks?;
+    let load_node_commands = load_node_commands?;
+
+    let (nice_load_node_tasks, orphan_load_node_commands): (Vec<_>, Vec<_>) = load_node_commands
+        .into_par_iter()
+        .partition_map(|(record, exec)| {
+            use rayon::iter::Either;
+
+            if container_names.contains(&record.target_container_name) {
+                Either::Left((record, exec))
+            } else {
+                Either::Right((record, exec))
+            }
+        });
+
+    // Report the number of entities
+    eprintln!("nodes:\t{}", pure_node_commands.len());
+    eprintln!("containers:\t{}", container_names.len());
+    eprintln!(
+        "load node:\t{}",
+        nice_load_node_tasks.len() + orphan_load_node_commands.len()
+    );
+    eprintln!("orphan load node:\t{}", orphan_load_node_commands.len());
+
+    // Build container groups
+    let container_groups: HashMap<_, _> = {
+        let mut container_groups: HashMap<_, _> = container_names
+            .into_iter()
+            .map(|container_name| {
+                (
+                    container_name,
+                    ContainerGroup {
+                        container_tasks: vec![],
+                        load_node_tasks: vec![],
+                    },
+                )
+            })
+            .collect();
+
+        for (container_name, (_record, _cmdline, exec)) in container_commands {
+            container_groups
+                .get_mut(&container_name)
+                .unwrap()
+                .container_tasks
+                .push(exec);
+        }
+
+        for (record, exec) in nice_load_node_tasks {
+            container_groups
+                .get_mut(&record.target_container_name)
+                .unwrap()
+                .load_node_tasks
+                .push(exec);
+        }
+
+        container_groups
+    };
 
     // Execute tasks simultaneously.
-    let node_futures: FuturesUnordered<_> = node_tasks.into_iter().collect();
-    let load_node_futures: FuturesUnordered<_> = load_node_tasks.into_iter().collect();
+    let container_group_futures: FuturesUnordered<_> = container_groups
+        .into_iter()
+        .map(|(_container_name, group)| {
+            let ContainerGroup {
+                container_tasks,
+                load_node_tasks,
+            } = group;
+
+            let spawn_container_futures: FuturesUnordered<_> = container_tasks
+                .into_iter()
+                .map(|exec| async move {
+                    let Execution {
+                        log_name,
+                        output_dir,
+                        mut command,
+                    } = exec;
+
+                    let child = command.spawn().wrap_err_with(|| {
+                        format!("[{log_name}] fails to start composable node container process")
+                    })?;
+                    let run_task =
+                        async move { wait_for_node(&log_name, &output_dir, child).await };
+                    eyre::Ok(run_task)
+                })
+                .collect();
+            let run_load_node_futures: FuturesUnordered<_> = load_node_tasks
+                .into_iter()
+                .map(|exec| async move {
+                    let Execution {
+                        log_name,
+                        output_dir,
+                        mut command,
+                    } = exec;
+                    let child = command.spawn()?;
+                    wait_for_load_node(&log_name, &output_dir, child).await?;
+                    eyre::Ok(())
+                })
+                .collect();
+
+            async move {
+                let run_container_futures: FuturesUnordered<_> =
+                    spawn_container_futures.try_collect().await?;
+                tokio::time::sleep(load_node_delay).await;
+                join!(
+                    consume_futures(run_container_futures),
+                    consume_futures(run_load_node_futures),
+                );
+                eyre::Ok(())
+            }
+        })
+        .collect();
+
+    let pure_node_futures: FuturesUnordered<_> = pure_node_commands
+        .into_iter()
+        .map(|(_, _, exec)| async move {
+            let Execution {
+                log_name,
+                output_dir,
+                mut command,
+            } = exec;
+            let child = command.spawn()?;
+            wait_for_node(&log_name, &output_dir, child).await?;
+            eyre::Ok(())
+        })
+        .collect();
+    let orphan_load_node_futures: FuturesUnordered<_> = orphan_load_node_commands
+        .into_iter()
+        .map(|(_, exec)| async move {
+            let Execution {
+                log_name,
+                output_dir,
+                mut command,
+            } = exec;
+            let child = command.spawn()?;
+            wait_for_load_node(&log_name, &output_dir, child).await?;
+            eyre::Ok(())
+        })
+        .collect();
 
     join!(
-        async move {
-            node_futures
-                .for_each(|result| async move {
-                    if let Err(err) = result {
-                        eprintln!("{err}");
-                    }
-                })
-                .await;
-        },
-        async move {
-            // Postpone the load node commands to wait for containers
-            // to be ready.
-            tokio::time::sleep(Duration::from_millis(5000)).await;
-
-            load_node_futures
-                .for_each(|result| async move {
-                    if let Err(err) = result {
-                        eprintln!("{err}");
-                    }
-                })
-                .await;
-        }
+        consume_futures(container_group_futures),
+        consume_futures(pure_node_futures),
+        consume_futures(orphan_load_node_futures),
     );
 
     Ok(())
@@ -310,7 +397,7 @@ pub fn prepare_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
     Ok(log_dir.to_path_buf())
 }
 
-fn save_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> eyre::Result<()> {
+fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> eyre::Result<()> {
     let status_path = output_dir.join("status");
 
     // Save status code
@@ -340,4 +427,180 @@ fn save_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> eyre::
     }
 
     eyre::Ok(())
+}
+
+fn save_load_node_status(
+    status: &ExitStatus,
+    output_dir: &Path,
+    log_name: &str,
+) -> eyre::Result<()> {
+    let status_path = output_dir.join("status");
+
+    // Save status code
+    {
+        let mut status_file = File::create(status_path)?;
+        if let Some(code) = status.code() {
+            write!(status_file, "{code}",)?;
+        } else {
+            write!(status_file, "[none]")?;
+        }
+    }
+
+    // Print status to the terminal
+    if status.success() {
+        // eprintln!("[{log_name}] finishes")
+    } else {
+        match status.code() {
+            Some(code) => {
+                eprintln!("[{log_name}] fails with code {code}.",);
+                eprintln!("[{log_name}] Check {}", output_dir.display());
+            }
+            None => {
+                eprintln!("[{log_name}] fails without exit code.",);
+                eprintln!("[{log_name}] Check {}", output_dir.display());
+            }
+        }
+    }
+
+    eyre::Ok(())
+}
+
+fn prepare_node_command<'a>(
+    record: &'a NodeRecord,
+    cmdline: &NodeCommandLine,
+    output_dir: PathBuf,
+) -> eyre::Result<Execution> {
+    let Some(exec_name) = &record.exec_name else {
+        bail!(r#"expect the "exec_name" field but not found"#);
+    };
+    let Some(package) = &record.package else {
+        bail!(r#"expect the "package" field but not found"#);
+    };
+
+    // let output_dir = node_log_dir.join(package).join(exec_name);
+    ensure!(output_dir.is_relative());
+    let stdout_path = output_dir.join("out");
+    let stderr_path = output_dir.join("err");
+    let cmdline_path = output_dir.join("cmdline");
+
+    fs::create_dir_all(&output_dir)?;
+
+    {
+        let mut cmdline_file = File::create(cmdline_path)?;
+        cmdline_file.write_all(&cmdline.to_shell(false))?;
+    }
+
+    let stdout_file = File::create(stdout_path)?;
+    let stderr_file = File::create(&stderr_path)?;
+
+    let mut command: tokio::process::Command = cmdline.to_command(false).into();
+    command.kill_on_drop(true);
+    command.stdin(Stdio::null());
+    command.stdout(stdout_file);
+    command.stderr(stderr_file);
+
+    let log_name = format!("NODE {package} {exec_name}");
+    // let task = async move {
+    //     let mut child = command.spawn()?;
+    //     let status = child.wait().await?;
+    //     save_status(&status, &output_dir, &log_name)?;
+
+    //     eyre::Ok(())
+    // };
+
+    eyre::Ok(Execution {
+        log_name,
+        output_dir,
+        command,
+    })
+}
+
+fn prepare_load_node_command(
+    record: &LoadNodeRecord,
+    output_dir: PathBuf,
+) -> eyre::Result<Execution> {
+    let command = record.to_command();
+    let LoadNodeRecord {
+        package,
+        plugin,
+        target_container_name,
+        ..
+    } = record;
+    let stdout_path = output_dir.join("out");
+    let stderr_path = output_dir.join("err");
+    let cmdline_path = output_dir.join("cmdline");
+
+    fs::create_dir_all(&output_dir)?;
+
+    {
+        let mut cmdline_file = File::create(cmdline_path)?;
+        cmdline_file.write_all(&record.to_shell())?;
+    }
+
+    let stdout_file = File::create(stdout_path)?;
+    let stderr_file = File::create(&stderr_path)?;
+
+    let mut command: tokio::process::Command = command.into();
+    command.kill_on_drop(true);
+    command.stdin(Stdio::null());
+    command.stdout(stdout_file);
+    command.stderr(stderr_file);
+
+    let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
+    // let start_task = async move {
+    //     let mut child = command.spawn()?;
+    //     let status = child.wait().await?;
+    //     save_status(&status, &output_dir, &log_name)?;
+    //     eyre::Ok(())
+    // };
+
+    eyre::Ok(Execution {
+        log_name,
+        output_dir,
+        command,
+    })
+}
+
+async fn wait_for_node(
+    log_name: &str,
+    output_dir: &Path,
+    mut child: tokio::process::Child,
+) -> eyre::Result<()> {
+    let status = child.wait().await?;
+    save_node_status(&status, output_dir, log_name)?;
+    eyre::Ok(())
+}
+
+async fn wait_for_load_node(
+    log_name: &str,
+    output_dir: &Path,
+    mut child: tokio::process::Child,
+) -> eyre::Result<()> {
+    let status = child.wait().await?;
+    save_load_node_status(&status, output_dir, log_name)?;
+    eyre::Ok(())
+}
+
+async fn consume_futures<Fut>(futures: FuturesUnordered<Fut>)
+where
+    Fut: Future<Output = eyre::Result<()>>,
+{
+    futures
+        .for_each(|result| async move {
+            if let Err(err) = result {
+                eprintln!("{err}");
+            }
+        })
+        .await;
+}
+
+struct ContainerGroup<CF, LF> {
+    pub container_tasks: Vec<CF>,
+    pub load_node_tasks: Vec<LF>,
+}
+
+struct Execution {
+    pub log_name: String,
+    pub output_dir: PathBuf,
+    pub command: tokio::process::Command,
 }

@@ -7,8 +7,15 @@ pub type ParameterValue = String;
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchDump {
     pub node: Vec<NodeRecord>,
-    pub file_data: HashMap<PathBuf, String>,
     pub load_node: Vec<LoadNodeRecord>,
+    pub container: Vec<ComposableNodeContainerRecord>,
+    pub file_data: HashMap<PathBuf, String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposableNodeContainerRecord {
+    pub namespace: String,
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

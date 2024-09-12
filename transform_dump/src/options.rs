@@ -21,4 +21,6 @@ pub struct Play {
     pub log_dir: PathBuf,
     #[clap(default_value = "record.json")]
     pub input_file: PathBuf,
+    #[clap(default_value = "200")]
+    pub delay_load_node_millis: u64,
 }
