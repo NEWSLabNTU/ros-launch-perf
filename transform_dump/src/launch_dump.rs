@@ -121,7 +121,7 @@ impl LoadNodeRecord {
     pub fn to_command(&self) -> Command {
         let cmdline = self.to_cmdline();
         let (program, args) = cmdline.split_first().unwrap();
-        let mut command = Command::new(&program);
+        let mut command = Command::new(program);
         command.args(args);
         command
     }

@@ -9,13 +9,14 @@ use futures::{join, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use launch_dump::{LaunchDump, NodeRecord};
 use node_cmdline::NodeCommandLine;
-use rayon::prelude::*;
+use rayon::{iter::Either, prelude::*};
 use std::{
+    collections::HashMap,
     fs,
     fs::File,
     io::{self, prelude::*, BufReader},
     path::{Path, PathBuf, MAIN_SEPARATOR},
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     time::Duration,
 };
 use tokio::runtime::Runtime;
@@ -69,6 +70,7 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
 async fn run(opts: &options::Play) -> eyre::Result<()> {
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
+    // Prepare directories
     let log_dir = prepare_log_dir(&opts.log_dir)?;
 
     let params_files_dir = log_dir.join("params_files");
@@ -82,8 +84,9 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
 
+    // Prepare node execution contexts
     let node_cmdlines = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
-    let node_futures: Result<Vec<_>, _> = node_cmdlines
+    let node_tasks: Result<Vec<_>, _> = node_cmdlines
         .into_par_iter()
         .map(|(record, cmdline)| {
             let Some(exec_name) = &record.exec_name else {
@@ -97,14 +100,13 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             ensure!(output_dir.is_relative());
             let stdout_path = output_dir.join("out");
             let stderr_path = output_dir.join("err");
-            let status_path = output_dir.join("status");
             let cmdline_path = output_dir.join("cmdline");
 
-            fs::create_dir_all(output_dir)?;
+            fs::create_dir_all(&output_dir)?;
 
             {
                 let mut cmdline_file = File::create(cmdline_path)?;
-                cmdline_file.write_all(&record.to_shell())?;
+                cmdline_file.write_all(&cmdline.to_shell(false))?;
             }
 
             let stdout_file = File::create(stdout_path)?;
@@ -119,33 +121,8 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             let task = async move {
                 let mut child = command.spawn()?;
                 let status = child.wait().await?;
-
-                // Save status code
-                {
-                    let mut status_file = File::create(status_path)?;
-                    if let Some(code) = status.code() {
-                        write!(status_file, "{code}",)?;
-                    } else {
-                        write!(status_file, "[none]")?;
-                    }
-                }
-
-                // Print status to the terminal
-                let node_name = format!("NODE {package} {exec_name}");
-                if status.success() {
-                    eprintln!("[{node_name}] finishes")
-                } else {
-                    match status.code() {
-                        Some(code) => {
-                            eprintln!("[{node_name}] fails with code {code}.",);
-                            eprintln!("[{node_name}] Check {}", stderr_path.display());
-                        }
-                        None => {
-                            eprintln!("[{node_name}] fails without exit code.",);
-                            eprintln!("[{node_name}] Check {}", stderr_path.display());
-                        }
-                    }
-                }
+                let log_name = format!("NODE {package} {exec_name}");
+                save_status(&status, &output_dir, &log_name)?;
 
                 eyre::Ok(())
             };
@@ -153,10 +130,11 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             eyre::Ok(task)
         })
         .collect();
-    let node_futures: FuturesUnordered<_> = node_futures?.into_iter().collect();
+    let node_tasks = node_tasks?;
 
-    let load_node_futures: Result<Vec<_>, _> = launch_dump
-        .load_node
+    // Prepare LoadNode request execution contexts
+    let load_node_records = &launch_dump.load_node;
+    let load_node_tasks: Result<Vec<_>, _> = load_node_records
         .par_iter()
         .map(|record| {
             let command = record.to_command();
@@ -172,10 +150,9 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                 .join(plugin);
             let stdout_path = output_dir.join("out");
             let stderr_path = output_dir.join("err");
-            let status_path = output_dir.join("status");
             let cmdline_path = output_dir.join("cmdline");
 
-            fs::create_dir_all(output_dir)?;
+            fs::create_dir_all(&output_dir)?;
 
             {
                 let mut cmdline_file = File::create(cmdline_path)?;
@@ -193,32 +170,10 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
 
             let task = async move {
                 let mut child = command.spawn()?;
-
                 let status = child.wait().await?;
-
-                // Save status code
-                let mut status_file = File::create(status_path)?;
-
-                if let Some(code) = status.code() {
-                    write!(status_file, "{code}",)?;
-                } else {
-                    write!(status_file, "[none]")?;
-                }
-
-                let node_name =
+                let log_name =
                     format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
-                if !status.success() {
-                    match status.code() {
-                        Some(code) => {
-                            eprintln!("[{node_name}] fails with code {code}.",);
-                            eprintln!("[{node_name}] Check {}", stderr_path.display());
-                        }
-                        None => {
-                            eprintln!("[{node_name}] fails without exit code.",);
-                            eprintln!("[{node_name}] Check {}", stderr_path.display());
-                        }
-                    }
-                }
+                save_status(&status, &output_dir, &log_name)?;
 
                 eyre::Ok(())
             };
@@ -226,7 +181,11 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
             eyre::Ok(task)
         })
         .collect();
-    let load_node_futures: FuturesUnordered<_> = load_node_futures?.into_iter().collect();
+    let load_node_tasks = load_node_tasks?;
+
+    // Execute tasks simultaneously.
+    let node_futures: FuturesUnordered<_> = node_tasks.into_iter().collect();
+    let load_node_futures: FuturesUnordered<_> = load_node_tasks.into_iter().collect();
 
     join!(
         async move {
@@ -349,4 +308,36 @@ pub fn prepare_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
         .wrap_err_with(|| format!("unable to create directory {}", log_dir.display()))?;
 
     Ok(log_dir.to_path_buf())
+}
+
+fn save_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> eyre::Result<()> {
+    let status_path = output_dir.join("status");
+
+    // Save status code
+    {
+        let mut status_file = File::create(status_path)?;
+        if let Some(code) = status.code() {
+            write!(status_file, "{code}",)?;
+        } else {
+            write!(status_file, "[none]")?;
+        }
+    }
+
+    // Print status to the terminal
+    if status.success() {
+        eprintln!("[{log_name}] finishes")
+    } else {
+        match status.code() {
+            Some(code) => {
+                eprintln!("[{log_name}] fails with code {code}.",);
+                eprintln!("[{log_name}] Check {}", output_dir.display());
+            }
+            None => {
+                eprintln!("[{log_name}] fails without exit code.",);
+                eprintln!("[{log_name}] Check {}", output_dir.display());
+            }
+        }
+    }
+
+    eyre::Ok(())
 }
