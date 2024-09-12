@@ -6,6 +6,7 @@ authors = [
     { name = "aeon", email = "jerry73204@gmail.com" }
 ]
 dependencies = [
+    "ruamel-yaml>=0.18.6",
     "pyyaml>=6.0.2",
     "lark>=1.2.2",
     "packaging>=24.1",
