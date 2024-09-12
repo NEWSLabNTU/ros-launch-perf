@@ -29,7 +29,7 @@ launch. Then, analyze and replay the launch execution.
 ### Record a launch execution.
 
 This example runs a Autoware planning simulation. Press Ctrl-C to
-terminate the record. A `dump.json` will be created.
+terminate the record. A `record.json` will be created.
 
 ```sh
 just record \
@@ -40,16 +40,16 @@ just record \
 
 ### Analyze the dump file.
 
+To replay the launch,
+
+```sh
+just play
+```
+
 To generate the shell scripts to replay the launch on the terminal,
 
 ```sh
 just generate_script
-```
-
-To replay the launch,
-
-```sh
-just play_dump
 ```
 
 ## Known Issues
