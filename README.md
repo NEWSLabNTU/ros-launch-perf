@@ -3,7 +3,7 @@
 This project provides tools to record the execution of ROS 2
 launch. Then, analyze and replay the launch execution.
 
-[Demo Video](demo.webm)
+[![Watch the demo](demo.png)](demo.webm)
 
 ## Prerequisites
 
