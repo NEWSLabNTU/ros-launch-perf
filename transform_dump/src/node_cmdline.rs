@@ -1,16 +1,15 @@
-use eyre::{bail, Context};
+use eyre::bail;
 use itertools::{chain, Itertools};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
     collections::{HashMap, HashSet},
-    fs,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CommandLine {
+pub struct NodeCommandLine {
     pub command: String,
     pub user_args: Vec<String>,
     pub remaps: HashMap<String, String>,
@@ -23,7 +22,7 @@ pub struct CommandLine {
     pub enclave: Option<String>,
 }
 
-impl CommandLine {
+impl NodeCommandLine {
     pub fn from_cmdline(cmdline: impl IntoIterator<Item = impl AsRef<str>>) -> eyre::Result<Self> {
         let (command, user_args, ros_args) = {
             let mut iter = cmdline.into_iter();
@@ -152,41 +151,6 @@ impl CommandLine {
             stdout_logs,
             enclave,
         })
-    }
-
-    pub fn copy_files_to_dir(&mut self, target_dir: impl AsRef<Path>) -> eyre::Result<()> {
-        let target_dir = target_dir.as_ref();
-        let Self {
-            params_files,
-            log_config_file,
-            ..
-        } = self;
-
-        let copy_file = |src_path: &Path| {
-            let file_name = url_escape::encode_component(src_path.to_str().unwrap());
-            let file_name: &str = file_name.borrow();
-            let tgt_path = target_dir.join(file_name);
-            fs::copy(src_path, &tgt_path).wrap_err_with(|| {
-                format!(
-                    "unable to copy file {} to {}",
-                    src_path.display(),
-                    tgt_path.display()
-                )
-            })?;
-            eyre::Ok(tgt_path)
-        };
-
-        self.params_files = params_files
-            .iter()
-            .map(|path| copy_file(path))
-            .try_collect()?;
-
-        self.log_config_file = match log_config_file {
-            Some(path) => Some(copy_file(path)?),
-            None => None,
-        };
-
-        Ok(())
     }
 
     pub fn to_cmdline(&self, long_args: bool) -> Vec<String> {

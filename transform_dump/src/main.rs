@@ -1,4 +1,5 @@
 mod launch_dump;
+mod node_cmdline;
 mod options;
 
 use crate::{launch_dump::LoadNodeRecord, options::Options};
@@ -7,18 +8,16 @@ use eyre::{bail, ensure, Context};
 use futures::{join, stream::FuturesUnordered, StreamExt};
 use itertools::Itertools;
 use launch_dump::{LaunchDump, NodeRecord};
+use node_cmdline::NodeCommandLine;
 use rayon::prelude::*;
-use ros_cmdlines::CommandLine;
 use std::{
-    borrow::Borrow,
     fs,
     fs::File,
     io::{self, prelude::*, BufReader},
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR},
     process::Stdio,
     time::Duration,
 };
-use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 fn main() -> eyre::Result<()> {
@@ -37,11 +36,14 @@ fn main() -> eyre::Result<()> {
 }
 
 fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
-    let params_dir = TempDir::new()?;
+    let log_dir = prepare_log_dir(&opts.log_dir)?;
+    let params_files_dir = log_dir.join("params_files");
+    fs::create_dir(&params_files_dir)?;
+
     let launch_dump = load_launch_dump(&opts.input_file)
         .wrap_err_with(|| format!("unable to read launch file {}", opts.input_file.display()))?;
 
-    let process_records = load_and_transform_process_records(&launch_dump, params_dir.path())?;
+    let process_records = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
     let process_shells = process_records
         .par_iter()
         .map(|(_record, cmdline)| cmdline.to_shell(false));
@@ -65,43 +67,12 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
 }
 
 async fn run(opts: &options::Play) -> eyre::Result<()> {
-    let params_dir = TempDir::new()?;
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
-    // If the log_dir points to an existing file/dir, find a proper N
-    // and rename it to "{log_dir}.N".
-    let log_dir = {
-        let log_dir = &opts.log_dir;
+    let log_dir = prepare_log_dir(&opts.log_dir)?;
 
-        if log_dir.exists() {
-            let Some(file_name) = log_dir.file_name() else {
-                todo!();
-            };
-            let Some(file_name) = file_name.to_str() else {
-                todo!();
-            };
-
-            for nth in 1.. {
-                let new_file_name = format!("{file_name}.{nth}");
-                let new_log_dir = log_dir.with_file_name(new_file_name);
-
-                if !new_log_dir.exists() {
-                    fs::rename(log_dir, &new_log_dir).wrap_err_with(|| {
-                        format!(
-                            "unable to move from {} to {}",
-                            log_dir.display(),
-                            new_log_dir.display()
-                        )
-                    })?;
-                    break;
-                }
-            }
-        }
-
-        fs::create_dir(log_dir)
-            .wrap_err_with(|| format!("unable to create directory {}", log_dir.display()))?;
-        log_dir
-    };
+    let params_files_dir = log_dir.join("params_files");
+    fs::create_dir(&params_files_dir)?;
 
     let node_log_dir = log_dir.join("node");
     fs::create_dir(&node_log_dir)
@@ -111,7 +82,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
 
-    let node_cmdlines = load_and_transform_process_records(&launch_dump, params_dir.path())?;
+    let node_cmdlines = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
     let node_futures: Result<Vec<_>, _> = node_cmdlines
         .into_par_iter()
         .map(|(record, cmdline)| {
@@ -166,12 +137,12 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                 } else {
                     match status.code() {
                         Some(code) => {
-                            eprintln!("[{node_name}] fails with code {code}. Check",);
-                            eprintln!("[{node_name}] {}", stderr_path.display());
+                            eprintln!("[{node_name}] fails with code {code}.",);
+                            eprintln!("[{node_name}] Check {}", stderr_path.display());
                         }
                         None => {
-                            eprintln!("[{node_name}] fails without exit code. Check",);
-                            eprintln!("[{node_name}] {}", stderr_path.display());
+                            eprintln!("[{node_name}] fails without exit code.",);
+                            eprintln!("[{node_name}] Check {}", stderr_path.display());
                         }
                     }
                 }
@@ -239,12 +210,12 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                 if !status.success() {
                     match status.code() {
                         Some(code) => {
-                            eprintln!("[{node_name}] fails with code {code}. Check",);
-                            eprintln!("[{node_name}] {}", stderr_path.display());
+                            eprintln!("[{node_name}] fails with code {code}.",);
+                            eprintln!("[{node_name}] Check {}", stderr_path.display());
                         }
                         None => {
-                            eprintln!("[{node_name}] fails without exit code. Check",);
-                            eprintln!("[{node_name}] {}", stderr_path.display());
+                            eprintln!("[{node_name}] fails without exit code.",);
+                            eprintln!("[{node_name}] Check {}", stderr_path.display());
                         }
                     }
                 }
@@ -270,7 +241,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
         async move {
             // Postpone the load node commands to wait for containers
             // to be ready.
-            tokio::time::sleep(Duration::from_millis(3000)).await;
+            tokio::time::sleep(Duration::from_millis(5000)).await;
 
             load_node_futures
                 .for_each(|result| async move {
@@ -291,10 +262,10 @@ fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     Ok(launch_dump)
 }
 
-fn load_and_transform_process_records<'a>(
+fn load_and_transform_node_records<'a>(
     launch_dump: &'a LaunchDump,
     params_dir: &Path,
-) -> eyre::Result<Vec<(&'a NodeRecord, CommandLine)>> {
+) -> eyre::Result<Vec<(&'a NodeRecord, NodeCommandLine)>> {
     let LaunchDump {
         node, file_data, ..
     } = launch_dump;
@@ -302,7 +273,7 @@ fn load_and_transform_process_records<'a>(
     let prepare: Result<Vec<_>, _> = node
         .par_iter()
         .map(|record| {
-            let mut cmdline = CommandLine::from_cmdline(&record.cmd)?;
+            let mut cmdline = NodeCommandLine::from_cmdline(&record.cmd)?;
 
             // Copy log_config_file to params dir.
             if let Some(src_path) = &cmdline.log_config_file {
@@ -339,10 +310,43 @@ fn load_and_transform_process_records<'a>(
 }
 
 fn copy_cached_data(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
-    let file_name = url_escape::encode_component(src_path.to_str().unwrap());
-    let file_name: &str = file_name.borrow();
+    let file_name = src_path.to_str().unwrap().replace(MAIN_SEPARATOR, "!");
     let tgt_path = tgt_dir.join(file_name);
     fs::write(&tgt_path, data)
         .wrap_err_with(|| format!("unable to create parameters file {}", tgt_path.display()))?;
     eyre::Ok(tgt_path)
+}
+
+pub fn prepare_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
+    // If the log_dir points to an existing file/dir, find a proper N
+    // and rename it to "{log_dir}.N".
+    if log_dir.exists() {
+        let Some(file_name) = log_dir.file_name() else {
+            todo!();
+        };
+        let Some(file_name) = file_name.to_str() else {
+            todo!();
+        };
+
+        for nth in 1.. {
+            let new_file_name = format!("{file_name}.{nth}");
+            let new_log_dir = log_dir.with_file_name(new_file_name);
+
+            if !new_log_dir.exists() {
+                fs::rename(log_dir, &new_log_dir).wrap_err_with(|| {
+                    format!(
+                        "unable to move from {} to {}",
+                        log_dir.display(),
+                        new_log_dir.display()
+                    )
+                })?;
+                break;
+            }
+        }
+    }
+
+    fs::create_dir(log_dir)
+        .wrap_err_with(|| format!("unable to create directory {}", log_dir.display()))?;
+
+    Ok(log_dir.to_path_buf())
 }

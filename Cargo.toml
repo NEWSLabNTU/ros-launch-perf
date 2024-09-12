@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ros_cmdlines", "transform_dump"]
+members = ["transform_dump"]
 
 [workspace.dependencies]
 serde = { version = "1.0.209", features = ["derive"] }
