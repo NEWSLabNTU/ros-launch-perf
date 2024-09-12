@@ -1,6 +1,5 @@
-from typing import Optional
-from typing import Text
-from typing import Text, Optional
+import decimal
+from typing import Text, Optional, Tuple, Optional
 
 from rcl_interfaces.msg import Parameter
 from ruamel.yaml import YAML
@@ -10,6 +9,17 @@ MY_YAML = YAML(typ='safe')
 MY_YAML.default_flow_style = True
 MY_YAML.width = 65536
 
+DECIMAL_CONTEXT = decimal.Context()
+DECIMAL_CONTEXT.prec = 20
+
+def float_to_str(f):
+    """
+    Convert the given float to a string,
+    without resorting to scientific notation
+    """
+    global DECIMAL_CONTEXT
+    d = DECIMAL_CONTEXT.create_decimal(repr(f))
+    return format(d, 'f')
 
 def log_level_code_to_text(code: int) -> Optional[Text]:
     match code :
@@ -31,7 +41,7 @@ def log_level_code_to_text(code: int) -> Optional[Text]:
 def text_to_kv(expr: Text):
     return tuple(expr.split(":=", 1))
 
-def param_to_kv(param: Parameter):
+def param_to_kv(param: Parameter) -> Tuple[Text, Text]:
     pvalue = param.value
 
     match pvalue.type:
@@ -40,7 +50,12 @@ def param_to_kv(param: Parameter):
         case 2:
             value = dump_yaml(pvalue.integer_value)
         case 3:
-            value = dump_yaml(pvalue.double_value)
+            # NOTE: ruamle.yaml serializes small floats into scientific
+            # notations like 1e-7. It is treated as a string by `ros2`
+            # command. It uses an alternative way to work around.
+
+            # value = dump_yaml(pvalue.double_value)
+            value = float_to_str(pvalue.double_value)
         case 4:
             value = dump_yaml(pvalue.string_value)
         case 5:
@@ -50,7 +65,12 @@ def param_to_kv(param: Parameter):
         case 7:
             value = dump_yaml(list(pvalue.integer_array_value))
         case 8:
-            value = dump_yaml(list(pvalue.double_array_value))
+            # NOTE: ruamle.yaml serializes small floats into scientific
+            # notations like 1e-7. It is treated as a string by `ros2`
+            # command. It uses an alternative way to work around.
+
+            # value = dump_yaml(list(pvalue.double_array_value))
+            value = '[' + ', '.join(float_to_str(f) for f in pvalue.double_array_value) + ']'
         case 9:
             value = dump_yaml(list(pvalue.string_array_value))
         case _:
