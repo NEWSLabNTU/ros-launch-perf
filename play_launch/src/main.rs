@@ -408,9 +408,9 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
     {
         let mut status_file = File::create(status_path)?;
         if let Some(code) = status.code() {
-            write!(status_file, "{code}",)?;
+            writeln!(status_file, "{code}",)?;
         } else {
-            write!(status_file, "[none]")?;
+            writeln!(status_file, "[none]")?;
         }
     }
 
@@ -444,9 +444,9 @@ fn save_load_node_status(
     {
         let mut status_file = File::create(status_path)?;
         if let Some(code) = status.code() {
-            write!(status_file, "{code}",)?;
+            writeln!(status_file, "{code}",)?;
         } else {
-            write!(status_file, "[none]")?;
+            writeln!(status_file, "[none]")?;
         }
     }
 
@@ -504,14 +504,6 @@ fn prepare_node_command<'a>(
     command.stderr(stderr_file);
 
     let log_name = format!("NODE {package} {exec_name}");
-    // let task = async move {
-    //     let mut child = command.spawn()?;
-    //     let status = child.wait().await?;
-    //     save_status(&status, &output_dir, &log_name)?;
-
-    //     eyre::Ok(())
-    // };
-
     eyre::Ok(Execution {
         log_name,
         output_dir,
@@ -551,12 +543,6 @@ fn prepare_load_node_command(
     command.stderr(stderr_file);
 
     let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
-    // let start_task = async move {
-    //     let mut child = command.spawn()?;
-    //     let status = child.wait().await?;
-    //     save_status(&status, &output_dir, &log_name)?;
-    //     eyre::Ok(())
-    // };
 
     eyre::Ok(Execution {
         log_name,
@@ -570,6 +556,12 @@ async fn wait_for_node(
     output_dir: &Path,
     mut child: tokio::process::Child,
 ) -> eyre::Result<()> {
+    if let Some(pid) = child.id() {
+        let pid_path = output_dir.join("pid");
+        let mut pid_file = File::create(pid_path)?;
+        writeln!(pid_file, "{pid}")?;
+    }
+
     let status = child.wait().await?;
     save_node_status(&status, output_dir, log_name)?;
     eyre::Ok(())
@@ -580,6 +572,12 @@ async fn wait_for_load_node(
     output_dir: &Path,
     mut child: tokio::process::Child,
 ) -> eyre::Result<()> {
+    if let Some(pid) = child.id() {
+        let pid_path = output_dir.join("pid");
+        let mut pid_file = File::create(pid_path)?;
+        writeln!(pid_file, "{pid}")?;
+    }
+
     let status = child.wait().await?;
     save_load_node_status(&status, output_dir, log_name)?;
     eyre::Ok(())
