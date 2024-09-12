@@ -33,7 +33,14 @@ class LoadNodeRecord:
 
 
 @dataclass
+class ComposableNodeContainerRecord:
+    name: Text
+    namespace: Text
+
+
+@dataclass
 class LaunchDump:
     node: List[NodeRecord]
     load_node: List[LoadNodeRecord]
+    container: List[ComposableNodeContainerRecord]
     file_data: Dict[Text, Text]

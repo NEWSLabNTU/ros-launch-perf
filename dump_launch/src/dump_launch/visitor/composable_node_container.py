@@ -9,7 +9,7 @@ from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 
 from .node import visit_node
-from ..launch_dump import LaunchDump
+from ..launch_dump import ComposableNodeContainerRecord, LaunchDump
 
 
 def visit_composable_node_container(
@@ -46,6 +46,17 @@ def visit_composable_node_container(
     container_actions = visit_node(
         container, context, dump
     )  # type: Optional[List[Action]]
+
+    # Save a record in dump
+    node_name = container._Node__expanded_node_name
+    if container.expanded_node_namespace == container.UNSPECIFIED_NODE_NAMESPACE:
+        namespace = None
+    else:
+        namespace = container.expanded_node_namespace
+
+    record = ComposableNodeContainerRecord(name=node_name, namespace=namespace)
+    dump.container.append(record)
+
     if container_actions is not None and load_actions is not None:
         return container_actions + load_actions
     if container_actions is not None:
