@@ -9,6 +9,6 @@ generate_script:
     mkdir -p params
     cargo run --release --bin play_launch -- --print-shell
 
-play_dump:
+play:
     mkdir -p params
     cargo run --release --bin play_launch
