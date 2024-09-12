@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["transform_dump"]
+members = ["play_launch"]
 
 [workspace.dependencies]
 serde = { version = "1.0.209", features = ["derive"] }

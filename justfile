@@ -7,8 +7,8 @@ record launch_file *params:
 
 generate_script:
     mkdir -p params
-    cargo run --release --bin transform_dump -- generate-script
+    cargo run --release --bin play_launch -- generate-script
 
 play_dump:
     mkdir -p params
-    cargo run --release --bin transform_dump -- play
+    cargo run --release --bin play_launch -- play
