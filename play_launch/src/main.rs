@@ -29,19 +29,16 @@ fn main() -> eyre::Result<()> {
 
     let opts = Options::parse();
 
-    match opts {
-        Options::GenerateScript(opts) => {
-            generate_shell(&opts)?;
-        }
-        Options::Play(opts) => {
-            Runtime::new()?.block_on(run(&opts))?;
-        }
+    if opts.print_shell {
+        generate_shell(&opts)?;
+    } else {
+        Runtime::new()?.block_on(run(&opts))?;
     }
 
     Ok(())
 }
 
-fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
+fn generate_shell(opts: &options::Options) -> eyre::Result<()> {
     let log_dir = prepare_log_dir(&opts.log_dir)?;
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
@@ -72,7 +69,7 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
     Ok(())
 }
 
-async fn run(opts: &options::Play) -> eyre::Result<()> {
+async fn run(opts: &options::Options) -> eyre::Result<()> {
     let load_node_delay = Duration::from_millis(opts.delay_load_node_millis);
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
