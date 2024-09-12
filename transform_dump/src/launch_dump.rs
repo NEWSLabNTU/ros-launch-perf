@@ -1,4 +1,4 @@
-use itertools::chain;
+use itertools::{chain, Itertools};
 use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, path::PathBuf, process::Command};
 
@@ -6,7 +6,6 @@ pub type ParameterValue = String;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchDump {
-    // pub process: Vec<ProcessRecord>,
     pub node: Vec<NodeRecord>,
     pub file_data: HashMap<PathBuf, String>,
     pub load_node: Vec<LoadNodeRecord>,
@@ -30,11 +29,13 @@ pub struct NodeRecord {
 }
 
 impl NodeRecord {
-    pub fn to_shell(&self) -> String {
-        let words = self.cmd.iter();
-        let words: Vec<_> = words.map(|w| w.to_string()).collect();
-        let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
-        shellwords::join(&words)
+    pub fn to_shell(&self) -> Vec<u8> {
+        self.cmd
+            .iter()
+            .map(|arg| shell_quote::Sh::quote_vec(arg))
+            .intersperse(vec![b' '])
+            .flatten()
+            .collect()
     }
 }
 
@@ -58,7 +59,7 @@ pub struct LoadNodeRecord {
 }
 
 impl LoadNodeRecord {
-    fn to_cmdline_iter(&self) -> impl Iterator<Item = Cow<'_, str>> {
+    fn to_cmdline(&self) -> Vec<String> {
         let Self {
             package,
             plugin,
@@ -113,23 +114,25 @@ impl LoadNodeRecord {
             param_args,
             extra_arg_args
         )
-        .map(Cow::from)
+        .map(|arg| arg.to_string())
+        .collect()
     }
 
     pub fn to_command(&self) -> Command {
-        let mut iter = self.to_cmdline_iter().map(|arg| arg.into_owned());
-        let program = iter.next().unwrap();
-        let args = iter;
-
-        let mut command = Command::new(program);
+        let cmdline = self.to_cmdline();
+        let (program, args) = cmdline.split_first().unwrap();
+        let mut command = Command::new(&program);
         command.args(args);
         command
     }
 
-    pub fn to_shell(&self) -> String {
-        let words = self.to_cmdline_iter();
-        let words: Vec<_> = words.map(|w| w.to_string()).collect();
-        let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
-        shellwords::join(&words)
+    pub fn to_shell(&self) -> Vec<u8> {
+        let cmdline = self.to_cmdline();
+        cmdline
+            .into_iter()
+            .map(|w| shell_quote::Sh::quote_vec(&w))
+            .intersperse(vec![b' '])
+            .flatten()
+            .collect()
     }
 }

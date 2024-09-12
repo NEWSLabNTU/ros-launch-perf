@@ -13,7 +13,7 @@ use std::{
     borrow::Borrow,
     fs,
     fs::File,
-    io::{prelude::*, BufReader},
+    io::{self, prelude::*, BufReader},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -54,9 +54,11 @@ fn generate_shell(opts: &options::GenerateScript) -> eyre::Result<()> {
     let mut shells: Vec<_> = process_shells.chain(load_node_shells).collect();
     shells.par_sort_unstable();
 
-    println!("#!/bin/sh");
+    let mut stdout = io::stdout();
+    writeln!(stdout, "#!/bin/sh")?;
     for shell in shells {
-        println!("{shell}");
+        stdout.write_all(&shell)?;
+        stdout.write_all(b"\n")?;
     }
 
     Ok(())
@@ -131,7 +133,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
 
             {
                 let mut cmdline_file = File::create(cmdline_path)?;
-                cmdline_file.write_all(record.to_shell().as_bytes())?;
+                cmdline_file.write_all(&record.to_shell())?;
             }
 
             let stdout_file = File::create(stdout_path)?;
@@ -172,11 +174,6 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                             eprintln!("[{node_name}] {}", stderr_path.display());
                         }
                     }
-
-                    // for line in BufReader::new(File::open(&stderr_path)?).lines() {
-                    //     let line = line?;
-                    //     eprintln!("[{node_name}] {line}");
-                    // }
                 }
 
                 eyre::Ok(())
@@ -211,7 +208,7 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
 
             {
                 let mut cmdline_file = File::create(cmdline_path)?;
-                cmdline_file.write_all(record.to_shell().as_bytes())?;
+                cmdline_file.write_all(&record.to_shell())?;
             }
 
             let stdout_file = File::create(stdout_path)?;
@@ -250,11 +247,6 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                             eprintln!("[{node_name}] {}", stderr_path.display());
                         }
                     }
-
-                    // for line in BufReader::new(File::open(&stderr_path)?).lines() {
-                    //     let line = line?;
-                    //     eprintln!("[{composable_node_name}] {line}");
-                    // }
                 }
 
                 eyre::Ok(())

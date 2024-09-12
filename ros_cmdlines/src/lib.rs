@@ -293,14 +293,18 @@ impl CommandLine {
 
     pub fn to_command(&self, long_args: bool) -> Command {
         let cmdline = self.to_cmdline(long_args);
-        let mut command = Command::new(&cmdline[0]);
-        command.args(&cmdline[1..]);
+        let (program, args) = cmdline.split_first().unwrap();
+        let mut command = Command::new(program);
+        command.args(args);
         command
     }
 
-    pub fn to_shell(&self, long_args: bool) -> String {
-        let words = self.to_cmdline(long_args);
-        let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
-        shellwords::join(&words)
+    pub fn to_shell(&self, long_args: bool) -> Vec<u8> {
+        self.to_cmdline(long_args)
+            .into_iter()
+            .map(|arg| shell_quote::Sh::quote_vec(&arg))
+            .intersperse(vec![b' '])
+            .flatten()
+            .collect()
     }
 }
