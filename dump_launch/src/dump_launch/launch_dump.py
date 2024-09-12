@@ -2,20 +2,6 @@ from typing import List, Dict, Optional, Any
 from typing import Text  # noqa: F401
 from typing import Tuple  # noqa: F401
 from dataclasses import dataclass
-from enum import Enum
-
-
-# class ProcessKind(Enum):
-#     COMPOSABLE_NODE_CONTAINER = "composable_node_container"
-#     LIFECYCLE_NODE = "lifecycle_node"
-#     NODE = "node"
-#     UNKNOWN = "unknown"
-
-
-# @dataclass
-# class ProcessRecord:
-#     kind: Text
-#     cmdline: List[Tuple[Text]]
 
 
 @dataclass
@@ -32,7 +18,7 @@ class NodeRecord:
     args: Optional[List[Text]]
     cmd: List[Text]
 
-    
+
 @dataclass
 class LoadNodeRecord:
     package: Text
@@ -42,13 +28,12 @@ class LoadNodeRecord:
     namespace: Text
     log_level: Optional[Text]
     remaps: List[Tuple[Text, Text]]
-    parameters: List[Tuple[Text, Text]]
-    extra_arguments: Dict[Text, Text]
+    params: List[Tuple[Text, Text]]
+    extra_args: Dict[Text, Text]
 
 
 @dataclass
 class LaunchDump:
     node: List[NodeRecord]
-    # process: List[ProcessRecord]
     load_node: List[LoadNodeRecord]
     file_data: Dict[Text, Text]

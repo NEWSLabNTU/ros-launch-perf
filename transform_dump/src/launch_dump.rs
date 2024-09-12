@@ -1,6 +1,8 @@
-use itertools::{chain, Itertools};
+use itertools::chain;
 use serde::Deserialize;
 use std::{borrow::Cow, collections::HashMap, path::PathBuf, process::Command};
+
+pub type ParameterValue = String;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchDump {
@@ -49,10 +51,10 @@ pub struct LoadNodeRecord {
     pub remaps: Vec<(String, String)>,
 
     #[serde(default)]
-    pub parameters: Vec<(String, ParameterValue)>,
+    pub params: Vec<(String, ParameterValue)>,
 
     #[serde(default)]
-    pub extra_arguments: HashMap<String, ParameterValue>,
+    pub extra_args: HashMap<String, String>,
 }
 
 impl LoadNodeRecord {
@@ -63,8 +65,8 @@ impl LoadNodeRecord {
             namespace,
             log_level,
             remaps,
-            parameters,
-            extra_arguments,
+            params,
+            extra_args,
             target_container_name,
             node_name,
         } = self;
@@ -88,19 +90,13 @@ impl LoadNodeRecord {
             .iter()
             .flat_map(|(src, tgt)| [Cow::from("-r"), format!("{src}:={tgt}").into()]);
 
-        let param_args = parameters.iter().flat_map(|(name, value)| {
-            [
-                Cow::from("-p"),
-                format!("{name}:={}", value.to_string()).into(),
-            ]
-        });
+        let param_args = params
+            .iter()
+            .flat_map(|(name, value)| [Cow::from("-p"), format!("{name}:={}", value).into()]);
 
-        let extra_arg_args = extra_arguments.iter().flat_map(|(name, value)| {
-            [
-                Cow::from("-e"),
-                format!("{name}:={}", value.to_string()).into(),
-            ]
-        });
+        let extra_arg_args = extra_args
+            .iter()
+            .flat_map(|(name, value)| [Cow::from("-e"), format!("{name}:={}", value).into()]);
 
         let log_level_args = log_level
             .as_deref()
@@ -135,48 +131,5 @@ impl LoadNodeRecord {
         let words: Vec<_> = words.map(|w| w.to_string()).collect();
         let words: Vec<_> = words.iter().map(|w| w.as_str()).collect();
         shellwords::join(&words)
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum ParameterValue {
-    Boolean(bool),
-    Integer(i64),
-    Float(f64),
-    String(String),
-    ByteArray(Vec<u8>),
-    BooleanArray(Vec<bool>),
-    IntegerArray(Vec<i64>),
-    FloatArray(Vec<f64>),
-    StringArray(Vec<String>),
-}
-
-impl ToString for ParameterValue {
-    fn to_string(&self) -> String {
-        match self {
-            ParameterValue::Boolean(val) => val.to_string(),
-            ParameterValue::Integer(val) => val.to_string(),
-            ParameterValue::Float(val) => val.to_string(),
-            ParameterValue::String(val) => val.to_string(),
-            ParameterValue::ByteArray(array) => {
-                format!("[{}]", array.iter().map(|val| val.to_string()).join(","))
-            }
-            ParameterValue::BooleanArray(array) => {
-                format!("[{}]", array.iter().map(|val| val.to_string()).join(","))
-            }
-            ParameterValue::IntegerArray(array) => {
-                format!("[{}]", array.iter().map(|val| val.to_string()).join(","))
-            }
-            ParameterValue::FloatArray(array) => {
-                format!("[{}]", array.iter().map(|val| val.to_string()).join(","))
-            }
-            ParameterValue::StringArray(array) => {
-                format!(
-                    "[{}]",
-                    array.iter().map(|val| format!("\"{val}\"")).join(",")
-                )
-            }
-        }
     }
 }

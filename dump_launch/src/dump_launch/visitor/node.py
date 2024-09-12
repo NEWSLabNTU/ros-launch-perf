@@ -12,6 +12,8 @@ from launch.utilities import perform_substitutions, is_a
 from launch_ros.descriptions import Parameter
 from launch.utilities import normalize_to_list_of_substitutions
 
+from ..utils import param_to_kv
+
 from .execute_process import visit_execute_process
 from ..launch_dump import LaunchDump, NodeRecord
 
@@ -91,7 +93,8 @@ def visit_node(
                     dump.file_data[path] = data
             else:
                 assert is_a(entry, Parameter)
-                raise
+                name, value = param_to_kv(entry)
+                params.append((name, value))
 
     if node.expanded_remapping_rules is None:
         remaps = list()
