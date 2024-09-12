@@ -21,8 +21,12 @@ use std::{
     time::Duration,
 };
 use tokio::runtime::Runtime;
+use tracing::{error, info};
 
 fn main() -> eyre::Result<()> {
+    // install global collector configured based on RUST_LOG env var.
+    tracing_subscriber::fmt::init();
+
     let opts = Options::parse();
 
     match opts {
@@ -171,13 +175,13 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
         });
 
     // Report the number of entities
-    eprintln!("nodes:\t{}", pure_node_commands.len());
-    eprintln!("containers:\t{}", container_names.len());
-    eprintln!(
+    info!("nodes:\t{}", pure_node_commands.len());
+    info!("containers:\t{}", container_names.len());
+    info!(
         "load node:\t{}",
         nice_load_node_tasks.len() + orphan_load_node_commands.len()
     );
-    eprintln!("orphan load node:\t{}", orphan_load_node_commands.len());
+    info!("orphan load node:\t{}", orphan_load_node_commands.len());
 
     // Build container groups
     let container_groups: HashMap<_, _> = {
@@ -232,7 +236,10 @@ async fn run(opts: &options::Play) -> eyre::Result<()> {
                     } = exec;
 
                     let child = command.spawn().wrap_err_with(|| {
-                        format!("[{log_name}] fails to start composable node container process")
+                        format!(
+                            "{log_name} container is unable to start. Check {}",
+                            output_dir.display()
+                        )
                     })?;
                     let run_task =
                         async move { wait_for_node(&log_name, &output_dir, child).await };
@@ -412,16 +419,16 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
 
     // Print status to the terminal
     if status.success() {
-        eprintln!("[{log_name}] finishes")
+        info!("[{log_name}] finishes")
     } else {
         match status.code() {
             Some(code) => {
-                eprintln!("[{log_name}] fails with code {code}.",);
-                eprintln!("[{log_name}] Check {}", output_dir.display());
+                error!("{log_name} fails with code {code}.",);
+                error!("Check {}", output_dir.display());
             }
             None => {
-                eprintln!("[{log_name}] fails without exit code.",);
-                eprintln!("[{log_name}] Check {}", output_dir.display());
+                error!("{log_name} fails.",);
+                error!("Check {}", output_dir.display());
             }
         }
     }
@@ -452,12 +459,12 @@ fn save_load_node_status(
     } else {
         match status.code() {
             Some(code) => {
-                eprintln!("[{log_name}] fails with code {code}.",);
-                eprintln!("[{log_name}] Check {}", output_dir.display());
+                error!("{log_name} fails with code {code}.",);
+                error!("Check {}", output_dir.display());
             }
             None => {
-                eprintln!("[{log_name}] fails without exit code.",);
-                eprintln!("[{log_name}] Check {}", output_dir.display());
+                error!("[{log_name}] fails.",);
+                error!("Check {}", output_dir.display());
             }
         }
     }
@@ -588,7 +595,7 @@ where
     futures
         .for_each(|result| async move {
             if let Err(err) = result {
-                eprintln!("{err}");
+                error!("{err}");
             }
         })
         .await;
