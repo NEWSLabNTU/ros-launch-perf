@@ -24,12 +24,18 @@ launch. Then, analyze and replay the launch execution.
   installation instructions. It enables us to use `justfile`, a modern
   version of `Makefile`.
 
+- procpath
+
+  Visit the [pypi site](https://pypi.org/project/Procpath/) to install
+  this tool. This is used for resource usage profiling.
+
 ## Usage
 
-### Record a launch execution.
+### Record a Launch Execution
 
-This example runs a Autoware planning simulation. Press Ctrl-C to
-terminate the record. A `record.json` will be created.
+This example analyzes the launch file to run Autoware planning
+simulation and generates `record.json` dump. This dump file records
+all nodes and parameters to perform the simulation.
 
 ```sh
 just record \
@@ -38,35 +44,36 @@ just record \
   sensor_model:=sample_sensor_kit
 ```
 
-### Analyze the dump file.
+### Play the Launch
 
-To replay the launch,
+This command loads the `record.json` and perform the launch execution.
 
 ```sh
 just play
 ```
 
-To generate the shell scripts to replay the launch on the terminal,
+(Optional) You can generate the shell script used to execute the
+launch.
 
 ```sh
 just generate_script
 ```
 
-## Known Issues
+## Profiling Resource Usage
 
-### Racing Among Composable Node Containers and LoadNode Requests
+Start the launch first by `just play`. Then, run this command to
+profile per-process resource usage into `profiling.sqlite` database
+file. Press Ctrl-C to terminate the profiling.
 
-The ROS2 launch provides the composable node container feature, which
-starts a special node as a container, and the container process
-receives composable node requests afterwards. In cases that tens of
-node processes are spawned, the container may not be ready before
-LoadNode requests are sent due to heavy system load.
+```sh
+just profile
+```
 
-### Incorrect Parameter Type
+Afterwards, you can generate SVG timecharts using this command.
 
-The node parameters are recorded and are stored in the JSON dump. It
-is observed that the `just play_dump` may not correctly interpret the
-parameter type.
+```sh
+just plot
+```
 
 ## License
 
