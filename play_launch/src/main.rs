@@ -5,8 +5,12 @@ mod node_cmdline;
 mod options;
 
 use crate::{
+    context::{
+        prepare_load_node_contexts, prepare_node_contexts, LoadNodeContextSet, NodeContextSet,
+    },
     execution::{
-        build_container_groups, consume_futures, wait_for_load_node, wait_for_node, ContainerGroup,
+        build_container_groups, spawn_load_node_groups, spawn_load_nodes, spawn_node_containers,
+        spawn_nodes,
     },
     launch_dump::{
         load_and_transform_node_records, load_launch_dump, ComposableNodeContainerRecord,
@@ -14,12 +18,9 @@ use crate::{
     options::Options,
 };
 use clap::Parser;
-use context::{
-    prepare_load_node_contexts, prepare_node_contexts, ExecutionContext, LoadNodeContextSet,
-    NodeContextSet,
-};
 use eyre::Context;
-use futures::{join, stream::FuturesUnordered, TryStreamExt};
+use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use itertools::chain;
 use rayon::prelude::*;
 use std::{
     collections::HashSet,
@@ -29,7 +30,7 @@ use std::{
     time::Duration,
 };
 use tokio::runtime::Runtime;
-use tracing::info;
+use tracing::{error, info};
 
 fn main() -> eyre::Result<()> {
     // install global collector configured based on RUST_LOG env var.
@@ -140,94 +141,56 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         nice_load_node_contexts,
     );
 
-    // Execute tasks simultaneously.
-    let container_group_futures: FuturesUnordered<_> = container_groups
-        .into_iter()
-        .map(|(_container_name, group)| {
-            let ContainerGroup {
-                container_tasks,
-                load_node_tasks,
-            } = group;
+    // Spawn node containers in each node container group
+    let (container_tasks, nice_load_node_groups) = spawn_node_containers(container_groups);
+    info!("Spawned all node containers");
 
-            let spawn_container_futures: FuturesUnordered<_> = container_tasks
-                .into_iter()
-                .map(|exec| async move {
-                    let ExecutionContext {
-                        log_name,
-                        output_dir,
-                        mut command,
-                    } = exec;
+    // Spawn nodes
+    let pure_node_tasks = spawn_nodes(pure_node_contexts);
+    info!("Spawned all nodes");
 
-                    let child = command.spawn().wrap_err_with(|| {
-                        format!(
-                            "{log_name} container is unable to start. Check {}",
-                            output_dir.display()
-                        )
-                    })?;
-                    let run_task =
-                        async move { wait_for_node(&log_name, &output_dir, child).await };
-                    eyre::Ok(run_task)
-                })
-                .collect();
-            let run_load_node_futures: FuturesUnordered<_> = load_node_tasks
-                .into_iter()
-                .map(|exec| async move {
-                    let ExecutionContext {
-                        log_name,
-                        output_dir,
-                        mut command,
-                    } = exec;
-                    let child = command.spawn()?;
-                    wait_for_load_node(&log_name, &output_dir, child).await?;
-                    eyre::Ok(())
-                })
-                .collect();
+    // Check if there are LoadNode requests
+    let has_load_nodes =
+        !(nice_load_node_groups.is_empty() && orphan_load_node_contexts.is_empty());
 
-            async move {
-                let run_container_futures: FuturesUnordered<_> =
-                    spawn_container_futures.try_collect().await?;
-                tokio::time::sleep(load_node_delay).await;
-                join!(
-                    consume_futures(run_container_futures),
-                    consume_futures(run_load_node_futures),
-                );
-                eyre::Ok(())
+    let (nice_load_node_tasks, orphan_load_node_tasks) = if has_load_nodes {
+        tokio::time::sleep(load_node_delay).await;
+
+        // Spawn composable nodes having belonging containers.
+        let nice_load_node_tasks = spawn_load_node_groups(nice_load_node_groups);
+
+        // Spawn composable nodes which have no belonging containers.
+        let orphan_load_node_tasks = spawn_load_nodes(orphan_load_node_contexts);
+
+        info!("Spawned all composable nodes");
+        (Some(nice_load_node_tasks), Some(orphan_load_node_tasks))
+    } else {
+        (None, None)
+    };
+
+    // Collect all process waiting tasks into one FuturesUnordered collection.
+    let futures: FuturesUnordered<BoxFuture<eyre::Result<()>>> = chain!(
+        container_tasks.into_iter().map(FutureExt::boxed),
+        pure_node_tasks.into_iter().map(FutureExt::boxed),
+        nice_load_node_tasks
+            .into_iter()
+            .flatten()
+            .map(FutureExt::boxed),
+        orphan_load_node_tasks
+            .into_iter()
+            .flatten()
+            .map(FutureExt::boxed),
+    )
+    .collect();
+
+    // Consume tasks.
+    futures
+        .for_each(|result| async move {
+            if let Err(err) = result {
+                error!("{err}");
             }
         })
-        .collect();
-
-    let pure_node_futures: FuturesUnordered<_> = pure_node_contexts
-        .into_iter()
-        .map(|context| async move {
-            let ExecutionContext {
-                log_name,
-                output_dir,
-                mut command,
-            } = context.exec;
-            let child = command.spawn()?;
-            wait_for_node(&log_name, &output_dir, child).await?;
-            eyre::Ok(())
-        })
-        .collect();
-    let orphan_load_node_futures: FuturesUnordered<_> = orphan_load_node_contexts
-        .into_iter()
-        .map(|context| async move {
-            let ExecutionContext {
-                log_name,
-                output_dir,
-                mut command,
-            } = context.exec;
-            let child = command.spawn()?;
-            wait_for_load_node(&log_name, &output_dir, child).await?;
-            eyre::Ok(())
-        })
-        .collect();
-
-    join!(
-        consume_futures(container_group_futures),
-        consume_futures(pure_node_futures),
-        consume_futures(orphan_load_node_futures),
-    );
+        .await;
 
     Ok(())
 }

@@ -1,5 +1,5 @@
-use crate::context::{ExecutionContext, LoadNodeContext, NodeContainerContext};
-use futures::stream::{FuturesUnordered, StreamExt};
+use crate::context::{ExecutionContext, LoadNodeContext, NodeContainerContext, NodeContext};
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
@@ -10,24 +10,28 @@ use std::{
 };
 use tracing::{error, info};
 
-pub struct ContainerGroup<CF, LF> {
-    pub container_tasks: Vec<CF>,
-    pub load_node_tasks: Vec<LF>,
+pub struct ContainerGroupContext {
+    pub container_contexts: Vec<ExecutionContext>,
+    pub load_node_contexts: Vec<ExecutionContext>,
+}
+
+pub struct LoadNodeGroupContext {
+    pub load_node_contexts: Vec<ExecutionContext>,
 }
 
 pub fn build_container_groups<'a>(
     container_names: &'a HashSet<String>,
     container_contexts: Vec<NodeContainerContext<'_>>,
     nice_load_node_contexts: Vec<LoadNodeContext<'_>>,
-) -> HashMap<&'a str, ContainerGroup<ExecutionContext, ExecutionContext>> {
+) -> HashMap<&'a str, ContainerGroupContext> {
     let mut container_groups: HashMap<&str, _> = container_names
         .iter()
         .map(|container_name| {
             (
                 container_name.as_str(),
-                ContainerGroup {
-                    container_tasks: vec![],
-                    load_node_tasks: vec![],
+                ContainerGroupContext {
+                    container_contexts: vec![],
+                    load_node_contexts: vec![],
                 },
             )
         })
@@ -37,7 +41,7 @@ pub fn build_container_groups<'a>(
         container_groups
             .get_mut(context.node_container_name.as_str())
             .unwrap()
-            .container_tasks
+            .container_contexts
             .push(context.node_context.exec);
     }
 
@@ -45,24 +49,151 @@ pub fn build_container_groups<'a>(
         container_groups
             .get_mut(context.record.target_container_name.as_str())
             .unwrap()
-            .load_node_tasks
+            .load_node_contexts
             .push(context.exec);
     }
 
     container_groups
 }
 
-pub async fn consume_futures<Fut>(futures: FuturesUnordered<Fut>)
-where
-    Fut: Future<Output = eyre::Result<()>>,
-{
-    futures
-        .for_each(|result| async move {
-            if let Err(err) = result {
-                error!("{err}");
+/// Spawn all node containers in each container group.
+pub fn spawn_node_containers(
+    container_groups: HashMap<&str, ContainerGroupContext>,
+) -> (
+    Vec<impl Future<Output = eyre::Result<()>>>,
+    HashMap<&str, LoadNodeGroupContext>,
+) {
+    let (container_task_groups, load_node_groups): (Vec<_>, HashMap<_, _>) = container_groups
+        .into_iter()
+        .filter_map(|(container_name, group)| {
+            let ContainerGroupContext {
+                container_contexts,
+                load_node_contexts,
+            } = group;
+
+            // Spawn all container nodes in the group.
+            let container_tasks: Vec<_> = container_contexts
+                .into_iter()
+                .filter_map(|exec| {
+                    let ExecutionContext {
+                        log_name,
+                        output_dir,
+                        mut command,
+                    } = exec;
+
+                    let child = match command.spawn() {
+                        Ok(child) => child,
+                        Err(err) => {
+                            error!("{log_name} is unable to start: {err}",);
+                            error!("Check {}", output_dir.display());
+                            return None;
+                        }
+                    };
+                    let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+
+                    Some(task)
+                })
+                .collect();
+
+            // If there is no container node spawned successfully,
+            // skip later load node tasks.
+            if container_tasks.is_empty() {
+                return None;
             }
+
+            Some((container_name, container_tasks, load_node_contexts))
         })
-        .await;
+        .map(|(container_name, container_tasks, load_node_contexts)| {
+            (
+                container_tasks,
+                (container_name, LoadNodeGroupContext { load_node_contexts }),
+            )
+        })
+        .unzip();
+
+    let container_tasks = container_task_groups.into_iter().flatten().collect();
+
+    (container_tasks, load_node_groups)
+}
+
+// Spawn all composable nodes in each container group.
+pub fn spawn_load_node_groups(
+    load_node_groups: HashMap<&str, LoadNodeGroupContext>,
+) -> Vec<impl Future<Output = Result<(), eyre::Error>>> {
+    load_node_groups
+        .into_iter()
+        .flat_map(|(_container_name, context)| context.load_node_contexts)
+        .filter_map(|load_node_context| {
+            let ExecutionContext {
+                log_name,
+                output_dir,
+                mut command,
+            } = load_node_context;
+
+            let child = match command.spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    error!("{log_name} is unable to start: {err}",);
+                    error!("Check {}", output_dir.display());
+                    return None;
+                }
+            };
+            let task = async move { wait_for_load_node(&log_name, &output_dir, child).await };
+
+            Some(task)
+        })
+        .collect()
+}
+
+// Spawn node processes.
+pub fn spawn_nodes(
+    node_contexts: Vec<NodeContext<'_>>,
+) -> Vec<impl Future<Output = eyre::Result<()>>> {
+    node_contexts
+        .into_iter()
+        .filter_map(|context| {
+            let ExecutionContext {
+                log_name,
+                output_dir,
+                mut command,
+            } = context.exec;
+            let child = match command.spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    error!("{log_name} is unable to start: {err}",);
+                    error!("Check {}", output_dir.display());
+                    return None;
+                }
+            };
+            let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+            Some(task)
+        })
+        .collect()
+}
+
+pub fn spawn_load_nodes(
+    load_node_contexts: Vec<LoadNodeContext<'_>>,
+) -> Vec<impl Future<Output = eyre::Result<()>>> {
+    load_node_contexts
+        .into_iter()
+        .filter_map(|context| {
+            let ExecutionContext {
+                log_name,
+                output_dir,
+                mut command,
+            } = context.exec;
+            let child = match command.spawn() {
+                Ok(child) => child,
+                Err(err) => {
+                    error!("{log_name} is unable to start: {err}",);
+                    error!("Check {}", output_dir.display());
+                    return None;
+                }
+            };
+            let task = async move { wait_for_load_node(&log_name, &output_dir, child).await };
+            Some(task)
+        })
+        .collect()
 }
 
 pub async fn wait_for_node(
