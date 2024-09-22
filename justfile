@@ -2,6 +2,7 @@ set shell := ["zsh", "-cu"]
 
 build:
     rye sync
+    rye build --all
     cargo build --release --all-targets
 
 record launch_file *params:
