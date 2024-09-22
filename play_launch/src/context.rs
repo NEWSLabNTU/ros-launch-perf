@@ -230,7 +230,7 @@ pub fn prepare_load_node_contexts(
                 ..
             } = record;
             let output_dir = load_node_log_dir
-                .join(target_container_name.replace("/", "!"))
+                .join(target_container_name.replace("/", "@"))
                 .join(package)
                 .join(plugin);
             let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");

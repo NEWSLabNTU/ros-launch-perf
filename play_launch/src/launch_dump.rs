@@ -263,7 +263,7 @@ pub fn load_and_transform_node_records<'a>(
 }
 
 fn copy_cached_data(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
-    let file_name = src_path.to_str().unwrap().replace(MAIN_SEPARATOR, "!");
+    let file_name = src_path.to_str().unwrap().replace(MAIN_SEPARATOR, "@");
     let tgt_path = tgt_dir.join(file_name);
     fs::write(&tgt_path, data)
         .wrap_err_with(|| format!("unable to create parameters file {}", tgt_path.display()))?;
