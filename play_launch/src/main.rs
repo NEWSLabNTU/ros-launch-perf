@@ -9,8 +9,8 @@ use crate::{
         prepare_load_node_contexts, prepare_node_contexts, LoadNodeContextSet, NodeContextSet,
     },
     execution::{
-        build_container_groups, spawn_load_node_groups, spawn_load_nodes, spawn_node_containers,
-        spawn_nodes,
+        build_container_groups, run_load_node_groups, run_load_nodes, spawn_node_containers,
+        spawn_nodes, SpawnComposableNodeConfig,
     },
     launch_dump::{
         load_and_transform_node_records, load_launch_dump, ComposableNodeContainerRecord,
@@ -19,7 +19,7 @@ use crate::{
 };
 use clap::Parser;
 use eyre::Context;
-use futures::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{future::BoxFuture, join, stream::FuturesUnordered, FutureExt, StreamExt};
 use itertools::chain;
 use rayon::prelude::*;
 use std::{
@@ -149,48 +149,52 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     let pure_node_tasks = spawn_nodes(pure_node_contexts);
     info!("Spawned all nodes");
 
-    // Check if there are LoadNode requests
-    let has_load_nodes =
-        !(nice_load_node_groups.is_empty() && orphan_load_node_contexts.is_empty());
+    // Create the task to perform all LoadNode requests.
+    let load_nodes_task = {
+        let config = SpawnComposableNodeConfig {
+            max_concurrent_spawn: opts.max_concurrent_load_node_spawn,
+            max_attemps: opts.load_node_attempts,
+            wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
+        };
 
-    let (nice_load_node_tasks, orphan_load_node_tasks) = if has_load_nodes {
-        tokio::time::sleep(load_node_delay).await;
+        async move {
+            let is_load_nodes_empty =
+                nice_load_node_groups.is_empty() && orphan_load_node_contexts.is_empty();
 
-        // Spawn composable nodes having belonging containers.
-        let nice_load_node_tasks = spawn_load_node_groups(nice_load_node_groups);
+            if is_load_nodes_empty {
+                return;
+            }
 
-        // Spawn composable nodes which have no belonging containers.
-        let orphan_load_node_tasks = spawn_load_nodes(orphan_load_node_contexts);
+            tokio::time::sleep(load_node_delay).await;
 
-        info!("Spawned all composable nodes");
-        (Some(nice_load_node_tasks), Some(orphan_load_node_tasks))
-    } else {
-        (None, None)
+            // Spawn composable nodes having belonging containers.
+            let future1 = run_load_node_groups(nice_load_node_groups, &config);
+
+            // Spawn composable nodes which have no belonging containers.
+            let future2 = run_load_nodes(orphan_load_node_contexts, &config);
+
+            join!(future1, future2);
+            info!("Spawned all composable nodes");
+        }
     };
 
     // Collect all process waiting tasks into one FuturesUnordered collection.
-    let futures: FuturesUnordered<BoxFuture<eyre::Result<()>>> = chain!(
-        container_tasks.into_iter().map(FutureExt::boxed),
-        pure_node_tasks.into_iter().map(FutureExt::boxed),
-        nice_load_node_tasks
-            .into_iter()
-            .flatten()
-            .map(FutureExt::boxed),
-        orphan_load_node_tasks
-            .into_iter()
-            .flatten()
-            .map(FutureExt::boxed),
-    )
-    .collect();
+    let wait_for_nodes_task = {
+        let futures: FuturesUnordered<BoxFuture<eyre::Result<()>>> = chain!(
+            container_tasks.into_iter().map(FutureExt::boxed),
+            pure_node_tasks.into_iter().map(FutureExt::boxed),
+        )
+        .collect();
 
-    // Consume tasks.
-    futures
-        .for_each(|result| async move {
+        // Consume tasks.
+        futures.for_each(|result| async move {
             if let Err(err) = result {
                 error!("{err}");
             }
         })
-        .await;
+    };
+
+    join!(wait_for_nodes_task, load_nodes_task);
 
     Ok(())
 }

@@ -24,8 +24,9 @@ pub struct LoadNodeContextSet<'a> {
 }
 
 pub struct LoadNodeContext<'a> {
+    pub log_name: String,
+    pub output_dir: PathBuf,
     pub record: &'a LoadNodeRecord,
-    pub exec: ExecutionContext,
 }
 
 pub struct NodeContext<'a> {
@@ -131,8 +132,12 @@ pub fn prepare_load_node_contexts<'a>(
                 .join(target_container_name.replace("/", "!"))
                 .join(package)
                 .join(plugin);
-            let exec = prepare_load_node_command(record, output_dir)?;
-            eyre::Ok(LoadNodeContext { record, exec })
+            let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
+            eyre::Ok(LoadNodeContext {
+                record,
+                log_name,
+                output_dir,
+            })
         })
         .collect();
     let load_node_commands = load_node_commands?;
@@ -189,46 +194,6 @@ fn prepare_node_command(
     command.stderr(stderr_file);
 
     let log_name = format!("NODE {package} {exec_name}");
-    eyre::Ok(ExecutionContext {
-        log_name,
-        output_dir,
-        command,
-    })
-}
-
-fn prepare_load_node_command(
-    record: &LoadNodeRecord,
-    output_dir: PathBuf,
-) -> eyre::Result<ExecutionContext> {
-    let command = record.to_command();
-    let LoadNodeRecord {
-        package,
-        plugin,
-        target_container_name,
-        ..
-    } = record;
-    let stdout_path = output_dir.join("out");
-    let stderr_path = output_dir.join("err");
-    let cmdline_path = output_dir.join("cmdline");
-
-    fs::create_dir_all(&output_dir)?;
-
-    {
-        let mut cmdline_file = File::create(cmdline_path)?;
-        cmdline_file.write_all(&record.to_shell())?;
-    }
-
-    let stdout_file = File::create(stdout_path)?;
-    let stderr_file = File::create(&stderr_path)?;
-
-    let mut command: tokio::process::Command = command.into();
-    command.kill_on_drop(true);
-    command.stdin(Stdio::null());
-    command.stdout(stdout_file);
-    command.stderr(stderr_file);
-
-    let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
-
     eyre::Ok(ExecutionContext {
         log_name,
         output_dir,
