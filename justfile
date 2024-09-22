@@ -13,7 +13,9 @@ generate_script:
 
 play:
     mkdir -p params
-    cargo run --release --bin play_launch
+    cargo run --release --bin play_launch --
+    # cargo run --release --bin play_launch -- --standalone-composable-nodes
+    # cargo run --release --bin play_launch -- --max-concurrent-load-node-spawn=100
 
 profile:
     procpath record -p $(cat $(find log/node -name pid) | tr '\n' ',') -d profiling.sqlite -i 0.1

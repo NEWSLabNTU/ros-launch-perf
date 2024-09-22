@@ -346,11 +346,18 @@ pub async fn run_load_composable_nodes(
         wait_timeout,
     } = config;
 
-    futures::stream::iter(load_node_contexts.into_iter())
+    let total_count = load_node_contexts.len();
+
+    let mut futures = futures::stream::iter(load_node_contexts.into_iter())
         .map(|context| async move { run_load_node(&context, wait_timeout, max_attempts).await })
         .buffer_unordered(max_concurrent_spawn)
-        .for_each(|()| async move {})
-        .await;
+        .zip(futures::stream::iter(1..));
+
+    while let Some(((), nth)) = futures.next().await {
+        if nth % 10 == 0 {
+            info!("Done loading {nth} out of {total_count} composable nodes.");
+        }
+    }
 }
 
 async fn run_load_node(context: &LoadNodeContext, wait_timeout: Duration, max_attempts: usize) {
@@ -360,13 +367,12 @@ async fn run_load_node(context: &LoadNodeContext, wait_timeout: Duration, max_at
         ..
     } = context;
     debug!("{log_name} is loading");
-    eprintln!("{log_name} is loading");
 
     for round in 1..=max_attempts {
         match run_load_node_once(context, wait_timeout, round).await {
             Ok(true) => return,
             Ok(false) => {
-                warn!("{log_name} fails to start. Retrying ,,, ({round}/{max_attempts})");
+                warn!("{log_name} fails to start. Retrying... ({round}/{max_attempts})");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             Err(err) => {
@@ -411,7 +417,7 @@ async fn run_load_node_once(
             return Ok(false);
         }
         Err(_) => {
-            warn!("{log_name} hangs more than {timeout:?}. Killing the process.");
+            warn!("{log_name} hangs more than {timeout:?}. Try killing the process.");
             match child.kill().await {
                 Ok(()) => {}
                 Err(err) => {
@@ -499,7 +505,7 @@ fn save_load_node_status(
 
     // Print status to the terminal
     if status.success() {
-        // eprintln!("[{log_name}] finishes")
+        debug!("{log_name} loading finishes successfully");
     } else {
         match status.code() {
             Some(code) => {

@@ -18,6 +18,7 @@ use crate::{
 };
 use clap::Parser;
 use eyre::Context;
+use futures::future::JoinAll;
 use futures::FutureExt;
 use itertools::chain;
 use rayon::prelude::*;
@@ -150,14 +151,23 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             wait_container_tasks,
             load_nice_composable_nodes_task,
             load_orphan_composable_nodes_task,
-        } => chain!(
-            wait_container_tasks,
-            [load_nice_composable_nodes_task
-                .map(|()| eyre::Ok(()))
-                .boxed()],
-            load_orphan_composable_nodes_task.map(|task| task.map(|()| eyre::Ok(())).boxed())
-        )
-        .collect(),
+        } => {
+            let load_task = async move {
+                info!("Loading composable nodes...");
+
+                let join: JoinAll<_> = chain!(
+                    [load_nice_composable_nodes_task.boxed()],
+                    load_orphan_composable_nodes_task.map(|task| task.boxed())
+                )
+                .collect();
+                join.await;
+
+                info!("Done loading all composable nodes");
+                eyre::Ok(())
+            };
+
+            chain!(wait_container_tasks, [load_task.boxed()]).collect()
+        }
     };
 
     let non_container_node_tasks = non_container_node_tasks
