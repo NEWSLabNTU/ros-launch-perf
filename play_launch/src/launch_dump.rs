@@ -45,17 +45,6 @@ pub struct NodeRecord {
     pub cmd: Vec<String>,
 }
 
-impl NodeRecord {
-    pub fn to_shell(&self) -> Vec<u8> {
-        self.cmd
-            .iter()
-            .map(|arg| shell_quote::Sh::quote_vec(arg))
-            .intersperse(vec![b' '])
-            .flatten()
-            .collect()
-    }
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub struct LoadNodeRecord {
     pub package: String,

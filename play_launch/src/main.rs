@@ -4,13 +4,13 @@ mod launch_dump;
 mod node_cmdline;
 mod options;
 
-use crate::execution::spawn_or_load_composable_nodes;
-use crate::execution::ComposableNodeTasks;
 use crate::{
     context::{
         prepare_load_node_contexts, prepare_node_contexts, LoadNodeContextSet, NodeContextSet,
     },
-    execution::{spawn_nodes, SpawnComposableNodeConfig},
+    execution::{
+        spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeTasks, SpawnComposableNodeConfig,
+    },
     launch_dump::{
         load_and_transform_node_records, load_launch_dump, ComposableNodeContainerRecord,
     },
@@ -18,8 +18,7 @@ use crate::{
 };
 use clap::Parser;
 use eyre::Context;
-use futures::future::JoinAll;
-use futures::FutureExt;
+use futures::{future::JoinAll, FutureExt};
 use itertools::chain;
 use rayon::prelude::*;
 use std::{
@@ -111,12 +110,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     let NodeContextSet {
         container_contexts,
         noncontainer_node_contexts: pure_node_contexts,
-    } = prepare_node_contexts(
-        &launch_dump,
-        &params_files_dir,
-        &node_log_dir,
-        &container_names,
-    )?;
+    } = prepare_node_contexts(&launch_dump, &node_log_dir, &container_names)?;
 
     // Prepare LoadNode request execution contexts
     let LoadNodeContextSet { load_node_contexts } =

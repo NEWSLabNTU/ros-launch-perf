@@ -1,16 +1,19 @@
-use eyre::bail;
+use eyre::{bail, Context};
 use itertools::{chain, Itertools};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
     collections::{HashMap, HashSet},
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     process::Command,
 };
 
+use crate::launch_dump::NodeRecord;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeCommandLine {
-    pub command: String,
+    pub command: Vec<String>,
     pub user_args: Vec<String>,
     pub remaps: HashMap<String, String>,
     pub params: HashMap<String, String>,
@@ -23,6 +26,84 @@ pub struct NodeCommandLine {
 }
 
 impl NodeCommandLine {
+    pub fn from_node_record(record: &NodeRecord, params_files_dir: &Path) -> eyre::Result<Self> {
+        let NodeRecord {
+            executable,
+            package,
+            name,
+            namespace,
+            params,
+            params_files: params_file_contents,
+            remaps,
+            ros_args: user_ros_args,
+            args: user_nonros_args,
+            exec_name: _,
+            cmd: _,
+        } = record;
+
+        let Some(package) = package else {
+            bail!(r#""package" is not set"#);
+        };
+
+        let command: Vec<_> = ["ros2", "run", package, executable]
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let user_args: Vec<_> = {
+            let user_nonros_args = user_nonros_args.iter().flatten().map(|s| s.as_str());
+            let user_ros_args = user_ros_args
+                .iter()
+                .flat_map(|args| chain!(["--ros-args"], args.iter().map(|s| s.as_str()), ["--"]));
+            chain!(user_nonros_args, user_ros_args)
+                .map(|s| s.to_string())
+                .collect()
+        };
+
+        let remaps: HashMap<_, _> = {
+            let name_remap = name
+                .as_ref()
+                .map(|name| ("__node".to_string(), name.to_string()));
+            let namespace_remap = namespace
+                .as_ref()
+                .map(|namespace| ("__ns".to_string(), namespace.to_string()));
+            let other_remaps = remaps
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.to_string()));
+            chain!(name_remap, namespace_remap, other_remaps).collect()
+        };
+
+        let params: HashMap<_, _> = params
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string()))
+            .collect();
+
+        let params_files: HashSet<_> = params_file_contents
+            .iter()
+            .enumerate()
+            .map(|(idx, data)| {
+                let file_name = format!("{idx}.yaml");
+                let path = params_files_dir.join(file_name);
+                fs::write(&path, data)
+                    .wrap_err_with(|| format!("unable to write {}", path.display()))?;
+                eyre::Ok(path)
+            })
+            .try_collect()?;
+
+        Ok(Self {
+            command,
+            user_args,
+            remaps,
+            params,
+            params_files,
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+        })
+    }
+
     pub fn from_cmdline(cmdline: impl IntoIterator<Item = impl AsRef<str>>) -> eyre::Result<Self> {
         let (command, user_args, ros_args) = {
             let mut iter = cmdline.into_iter();
@@ -140,7 +221,7 @@ impl NodeCommandLine {
         }
 
         Ok(Self {
-            command,
+            command: vec![command],
             user_args,
             remaps,
             params,
@@ -244,8 +325,8 @@ impl NodeCommandLine {
             .flatten()
             .collect();
 
-        let words: Vec<_> = itertools::chain!(
-            [command.as_str()],
+        let words: Vec<_> = chain!(
+            command.iter().map(|arg| arg.as_str()),
             user_args.iter().map(|arg| arg.as_str()),
             ros_args.iter().map(|arg| arg.borrow()),
         )

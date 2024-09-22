@@ -1,7 +1,4 @@
-use crate::{
-    context::{ExecutionContext, LoadNodeContext, NodeContainerContext, NodeContext},
-    launch_dump::LoadNodeRecord,
-};
+use crate::context::{ExecutionContext, LoadNodeContext, NodeContainerContext, NodeContext};
 use eyre::WrapErr;
 use futures::{
     future::{BoxFuture, FutureExt},
@@ -10,14 +7,13 @@ use futures::{
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs::File,
     future::Future,
     io::prelude::*,
     path::Path,
-    process::{ExitStatus, Stdio},
+    process::ExitStatus,
     time::Duration,
 };
-use tokio::process::Command;
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone, Copy)]
@@ -28,7 +24,7 @@ pub struct SpawnComposableNodeConfig {
 }
 
 pub struct ContainerGroupContext {
-    pub container_contexts: Vec<ExecutionContext>,
+    pub container_contexts: Vec<NodeContext>,
     pub load_node_contexts: Vec<LoadNodeContext>,
 }
 
@@ -70,7 +66,7 @@ pub fn build_container_groups(
             .get_mut(context.node_container_name.as_str())
             .expect("unable to find the container for the LoadNode request")
             .container_contexts
-            .push(context.node_context.exec);
+            .push(context.node_context);
     }
 
     for context in nice_load_node_contexts {
@@ -102,7 +98,15 @@ pub fn spawn_node_containers(
             // Spawn all container nodes in the group.
             let container_tasks: Vec<_> = container_contexts
                 .into_iter()
-                .filter_map(|exec| {
+                .filter_map(|context| {
+                    let exec = match context.to_exec_context() {
+                        Ok(exec) => exec,
+                        Err(err) => {
+                            error!("Unable to prepare execution for node: {err}",);
+                            error!("which is caused by the node: {:#?}", context.record);
+                            return None;
+                        }
+                    };
                     let ExecutionContext {
                         log_name,
                         output_dir,
@@ -165,11 +169,19 @@ pub fn spawn_nodes(node_contexts: Vec<NodeContext>) -> Vec<impl Future<Output = 
     node_contexts
         .into_iter()
         .filter_map(|context| {
+            let exec = match context.to_exec_context() {
+                Ok(exec) => exec,
+                Err(err) => {
+                    error!("Unable to prepare execution for node: {err}",);
+                    error!("which is caused by the node: {:#?}", context.record);
+                    return None;
+                }
+            };
             let ExecutionContext {
                 log_name,
                 output_dir,
                 mut command,
-            } = context.exec;
+            } = exec;
             let child = match command.spawn() {
                 Ok(child) => child,
                 Err(err) => {
@@ -311,16 +323,16 @@ pub fn spawn_standalone_composable_nodes(
             let LoadNodeContext {
                 log_name,
                 output_dir,
-                record,
-            } = context;
-            let mut command = match prepare_standalone_composable_node_command(&record, &output_dir)
-            {
+                ..
+            } = &context;
+            let mut command = match context.to_standalone_node_command() {
                 Ok(command) => command,
                 Err(err) => {
                     error!("{log_name} fails to generate command: {err}",);
                     return None;
                 }
             };
+
             let child = match command.spawn() {
                 Ok(child) => child,
                 Err(err) => {
@@ -329,7 +341,14 @@ pub fn spawn_standalone_composable_nodes(
                     return None;
                 }
             };
-            let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+            let task = async move {
+                let LoadNodeContext {
+                    log_name,
+                    output_dir,
+                    ..
+                } = &context;
+                wait_for_node(&log_name, &output_dir, child).await
+            };
             Some(task)
         })
         .collect()
@@ -394,10 +413,10 @@ async fn run_load_node_once(
     let LoadNodeContext {
         log_name,
         output_dir,
-        record,
+        ..
     } = context;
 
-    let mut command = prepare_load_composable_node_command(record, output_dir, round)?;
+    let mut command = context.to_load_node_command(round)?;
 
     let mut child = command
         .spawn()
@@ -522,59 +541,63 @@ fn save_load_node_status(
     eyre::Ok(())
 }
 
-fn prepare_load_composable_node_command(
-    record: &LoadNodeRecord,
-    output_dir: &Path,
-    round: usize,
-) -> eyre::Result<Command> {
-    let command = record.to_command(false);
-    let stdout_path = output_dir.join(format!("out.{round}"));
-    let stderr_path = output_dir.join(format!("err.{round}"));
-    let cmdline_path = output_dir.join(format!("cmdline.{round}"));
+// fn prepare_load_composable_node_command(
+//     context: &LoadNodeContext,
+//     round: usize,
+// ) -> eyre::Result<Command> {
+//     let LoadNodeContext {
+//         output_dir, record, ..
+//     } = context;
 
-    fs::create_dir_all(output_dir)?;
+//     let command = record.to_command(false);
+//     let stdout_path = output_dir.join(format!("out.{round}"));
+//     let stderr_path = output_dir.join(format!("err.{round}"));
+//     let cmdline_path = output_dir.join(format!("cmdline.{round}"));
 
-    {
-        let mut cmdline_file = File::create(cmdline_path)?;
-        cmdline_file.write_all(&record.to_shell(false))?;
-    }
+//     fs::create_dir_all(output_dir)?;
 
-    let stdout_file = File::create(stdout_path)?;
-    let stderr_file = File::create(&stderr_path)?;
+//     {
+//         let mut cmdline_file = File::create(cmdline_path)?;
+//         cmdline_file.write_all(&record.to_shell(false))?;
+//     }
 
-    let mut command: Command = command.into();
-    command.kill_on_drop(true);
-    command.stdin(Stdio::null());
-    command.stdout(stdout_file);
-    command.stderr(stderr_file);
+//     let stdout_file = File::create(stdout_path)?;
+//     let stderr_file = File::create(&stderr_path)?;
 
-    eyre::Ok(command)
-}
+//     let mut command: Command = command.into();
+//     command.kill_on_drop(true);
+//     command.stdin(Stdio::null());
+//     command.stdout(stdout_file);
+//     command.stderr(stderr_file);
 
-fn prepare_standalone_composable_node_command(
-    record: &LoadNodeRecord,
-    output_dir: &Path,
-) -> eyre::Result<Command> {
-    let command = record.to_command(true);
-    let stdout_path = output_dir.join("out");
-    let stderr_path = output_dir.join("err");
-    let cmdline_path = output_dir.join("cmdline");
+//     eyre::Ok(command)
+// }
 
-    fs::create_dir_all(output_dir)?;
+// fn prepare_standalone_composable_node_command(context: &LoadNodeContext) -> eyre::Result<Command> {
+//     let LoadNodeContext {
+//         output_dir, record, ..
+//     } = context;
 
-    {
-        let mut cmdline_file = File::create(cmdline_path)?;
-        cmdline_file.write_all(&record.to_shell(true))?;
-    }
+//     let command = record.to_command(true);
+//     let stdout_path = output_dir.join("out");
+//     let stderr_path = output_dir.join("err");
+//     let cmdline_path = output_dir.join("cmdline");
 
-    let stdout_file = File::create(stdout_path)?;
-    let stderr_file = File::create(&stderr_path)?;
+//     fs::create_dir_all(output_dir)?;
 
-    let mut command: Command = command.into();
-    command.kill_on_drop(true);
-    command.stdin(Stdio::null());
-    command.stdout(stdout_file);
-    command.stderr(stderr_file);
+//     {
+//         let mut cmdline_file = File::create(cmdline_path)?;
+//         cmdline_file.write_all(&record.to_shell(true))?;
+//     }
 
-    eyre::Ok(command)
-}
+//     let stdout_file = File::create(stdout_path)?;
+//     let stderr_file = File::create(&stderr_path)?;
+
+//     let mut command: Command = command.into();
+//     command.kill_on_drop(true);
+//     command.stdin(Stdio::null());
+//     command.stdout(stdout_file);
+//     command.stderr(stderr_file);
+
+//     eyre::Ok(command)
+// }
