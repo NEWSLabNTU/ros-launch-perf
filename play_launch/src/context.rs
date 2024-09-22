@@ -1,5 +1,5 @@
 use crate::{
-    launch_dump::{LaunchDump, LoadNodeRecord, NodeRecord},
+    launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
     node_cmdline::NodeCommandLine,
 };
 use eyre::{bail, ensure};
@@ -14,24 +14,29 @@ use std::{
 };
 use tokio::process::Command;
 
-pub struct NodeContextSet {
+/// ROS node contexts classified into disjoint sets.
+pub struct NodeContextClasses {
     pub container_contexts: Vec<NodeContainerContext>,
-    pub noncontainer_node_contexts: Vec<NodeContext>,
+    pub non_container_node_contexts: Vec<NodeContext>,
 }
 
-pub struct LoadNodeContextSet {
-    pub load_node_contexts: Vec<LoadNodeContext>,
+/// A set of composable node contexts belonging to the same node
+/// container.
+pub struct ComposableNodeContextSet {
+    pub load_node_contexts: Vec<ComposableNodeContext>,
 }
 
-pub struct LoadNodeContext {
+/// The context contains all essential data to load a ROS composable
+/// node into a node container.
+pub struct ComposableNodeContext {
     pub log_name: String,
     pub output_dir: PathBuf,
-    pub record: LoadNodeRecord,
+    pub record: ComposableNodeRecord,
 }
 
-impl LoadNodeContext {
+impl ComposableNodeContext {
     pub fn to_load_node_command(&self, round: usize) -> eyre::Result<Command> {
-        let LoadNodeContext {
+        let ComposableNodeContext {
             output_dir, record, ..
         } = self;
 
@@ -60,7 +65,7 @@ impl LoadNodeContext {
     }
 
     pub fn to_standalone_node_command(&self) -> eyre::Result<Command> {
-        let LoadNodeContext {
+        let ComposableNodeContext {
             output_dir, record, ..
         } = self;
 
@@ -89,6 +94,7 @@ impl LoadNodeContext {
     }
 }
 
+/// The context contains all essential data to execute a ROS node.
 pub struct NodeContext {
     pub record: NodeRecord,
     pub cmdline: NodeCommandLine,
@@ -141,22 +147,27 @@ impl NodeContext {
     }
 }
 
+/// The context contains all essential data to execute a node
+/// container.
 pub struct NodeContainerContext {
     pub node_container_name: String,
     pub node_context: NodeContext,
 }
 
+/// Essential data for a process execution.
 pub struct ExecutionContext {
     pub log_name: String,
     pub output_dir: PathBuf,
     pub command: tokio::process::Command,
 }
 
+/// Load and classify node records in the dump by its kind.
 pub fn prepare_node_contexts(
     launch_dump: &LaunchDump,
     node_log_dir: &Path,
     container_names: &HashSet<String>,
-) -> eyre::Result<NodeContextSet> {
+) -> eyre::Result<NodeContextClasses> {
+    // Prepare node contexts from node records in the dump.
     let node_contexts: Result<Vec<_>, _> = launch_dump
         .node
         .par_iter()
@@ -167,10 +178,13 @@ pub fn prepare_node_contexts(
             let Some(package) = &record.package else {
                 bail!(r#"expect the "package" field but not found"#);
             };
+
+            // Create the dir for the node
             let output_dir = node_log_dir.join(package).join(exec_name);
             let params_files_dir = output_dir.join("params_files");
-
             fs::create_dir_all(&params_files_dir)?;
+
+            // Build the command line.
             let cmdline = NodeCommandLine::from_node_record(record, &params_files_dir)?;
 
             eyre::Ok(NodeContext {
@@ -182,7 +196,9 @@ pub fn prepare_node_contexts(
         .collect();
     let node_contexts = node_contexts?;
 
-    let (container_contexts, pure_node_contexts): (Vec<_>, Vec<_>) =
+    // Classify the node contexts by checking if it's a node container
+    // or not.
+    let (container_contexts, non_container_node_contexts): (Vec<_>, Vec<_>) =
         node_contexts.into_par_iter().partition_map(|context| {
             use rayon::iter::Either;
 
@@ -193,37 +209,42 @@ pub fn prepare_node_contexts(
                 ..
             } = &context;
 
-            match (namespace, name) {
-                (Some(namespace), Some(name)) => {
-                    let container_key = format!("{namespace}/{name}");
-                    if container_names.contains(&container_key) {
-                        Either::Left(NodeContainerContext {
-                            node_container_name: container_key,
-                            node_context: context,
-                        })
-                    } else {
-                        Either::Right(context)
-                    }
-                }
-                _ => Either::Right(context),
-            }
+            // Check if the package/node_name is a known node
+            // container name.
+            let container_name = {
+                let (Some(namespace), Some(name)) = (namespace, name) else {
+                    return Either::Right(context);
+                };
+
+                let container_name = format!("{namespace}/{name}");
+                if !container_names.contains(&container_name) {
+                    return Either::Right(context);
+                };
+                container_name
+            };
+            let container_context = NodeContainerContext {
+                node_container_name: container_name,
+                node_context: context,
+            };
+            Either::Left(container_context)
         });
 
-    Ok(NodeContextSet {
+    Ok(NodeContextClasses {
         container_contexts,
-        noncontainer_node_contexts: pure_node_contexts,
+        non_container_node_contexts,
     })
 }
 
-pub fn prepare_load_node_contexts(
+/// Load composable node records in the dump.
+pub fn prepare_composable_node_contexts(
     launch_dump: &LaunchDump,
     load_node_log_dir: &Path,
-) -> eyre::Result<LoadNodeContextSet> {
+) -> eyre::Result<ComposableNodeContextSet> {
     let load_node_records = &launch_dump.load_node;
     let load_node_contexts: Result<Vec<_>, _> = load_node_records
         .par_iter()
         .map(|record| {
-            let LoadNodeRecord {
+            let ComposableNodeRecord {
                 package,
                 plugin,
                 target_container_name,
@@ -234,7 +255,7 @@ pub fn prepare_load_node_contexts(
                 .join(package)
                 .join(plugin);
             let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
-            eyre::Ok(LoadNodeContext {
+            eyre::Ok(ComposableNodeContext {
                 record: record.clone(),
                 log_name,
                 output_dir,
@@ -243,5 +264,5 @@ pub fn prepare_load_node_contexts(
         .collect();
     let load_node_contexts = load_node_contexts?;
 
-    Ok(LoadNodeContextSet { load_node_contexts })
+    Ok(ComposableNodeContextSet { load_node_contexts })
 }

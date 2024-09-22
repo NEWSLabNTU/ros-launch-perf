@@ -6,18 +6,17 @@ mod options;
 
 use crate::{
     context::{
-        prepare_load_node_contexts, prepare_node_contexts, LoadNodeContextSet, NodeContextSet,
+        prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
+        NodeContextClasses,
     },
     execution::{
         spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeTasks, SpawnComposableNodeConfig,
     },
-    launch_dump::{
-        load_and_transform_node_records, load_launch_dump, ComposableNodeContainerRecord,
-    },
+    launch_dump::{load_and_transform_node_records, load_launch_dump, NodeContainerRecord},
     options::Options,
 };
 use clap::Parser;
-use eyre::Context;
+use eyre::{bail, Context};
 use futures::{future::JoinAll, FutureExt};
 use itertools::chain;
 use rayon::prelude::*;
@@ -40,7 +39,11 @@ fn main() -> eyre::Result<()> {
     if opts.print_shell {
         generate_shell(&opts)?;
     } else {
-        Runtime::new()?.block_on(play(&opts))?;
+        // Build the async runtime.
+        let runtime = Runtime::new()?;
+
+        // Run the whole playing task in the runtime.
+        runtime.block_on(play(&opts))?;
     }
 
     Ok(())
@@ -48,7 +51,7 @@ fn main() -> eyre::Result<()> {
 
 /// Generate shell script from the launch record.
 fn generate_shell(opts: &options::Options) -> eyre::Result<()> {
-    let log_dir = prepare_log_dir(&opts.log_dir)?;
+    let log_dir = create_log_dir(&opts.log_dir)?;
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
 
@@ -83,7 +86,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
     // Prepare directories
-    let log_dir = prepare_log_dir(&opts.log_dir)?;
+    let log_dir = create_log_dir(&opts.log_dir)?;
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
@@ -101,28 +104,31 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         .container
         .par_iter()
         .map(|record| {
-            let ComposableNodeContainerRecord { namespace, name } = record;
+            let NodeContainerRecord { namespace, name } = record;
             format!("{namespace}/{name}")
         })
         .collect();
 
     // Prepare node execution contexts
-    let NodeContextSet {
+    let NodeContextClasses {
         container_contexts,
-        noncontainer_node_contexts: pure_node_contexts,
+        non_container_node_contexts: pure_node_contexts,
     } = prepare_node_contexts(&launch_dump, &node_log_dir, &container_names)?;
 
     // Prepare LoadNode request execution contexts
-    let LoadNodeContextSet { load_node_contexts } =
-        prepare_load_node_contexts(&launch_dump, &load_node_log_dir)?;
+    let ComposableNodeContextSet { load_node_contexts } =
+        prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
 
     // Report the number of entities
     info!("nodes:\t{}", pure_node_contexts.len());
 
     // Spawn non-container nodes
-    let non_container_node_tasks = spawn_nodes(pure_node_contexts);
+    let non_container_node_tasks = spawn_nodes(pure_node_contexts)
+        .into_iter()
+        .map(|future| future.boxed());
 
-    // Create the task to perform all LoadNode requests.
+    // Create the task set to load composable nodes according to user
+    // options.
     let composable_node_tasks = spawn_or_load_composable_nodes(
         container_contexts,
         load_node_contexts,
@@ -137,7 +143,8 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         Duration::from_millis(opts.delay_load_node_millis),
     );
 
-    let wait_composable_node_tasks = match composable_node_tasks {
+    // Unpack the task set to a Vec of tasks.
+    let wait_composable_node_tasks: Vec<_> = match composable_node_tasks {
         ComposableNodeTasks::Standalone {
             wait_composable_node_tasks,
         } => wait_composable_node_tasks,
@@ -164,13 +171,12 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         }
     };
 
-    let non_container_node_tasks = non_container_node_tasks
-        .into_iter()
-        .map(|future| future.boxed());
-
+    // Collect all waiting tasks built so far.
     let mut wait_futures: Vec<_> =
         chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
 
+    // Poll on all waiting tasks and consume finished tasks
+    // one-by-one.
     while !wait_futures.is_empty() {
         let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
 
@@ -185,15 +191,19 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     Ok(())
 }
 
-pub fn prepare_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
+/// Create a directory to store logging data.
+///
+/// If the directory already exists, move the directory to "log.N"
+/// where N is a number.
+pub fn create_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
     // If the log_dir points to an existing file/dir, find a proper N
     // and rename it to "{log_dir}.N".
     if log_dir.exists() {
         let Some(file_name) = log_dir.file_name() else {
-            todo!();
+            bail!("unable to find the file name of {}", log_dir.display());
         };
         let Some(file_name) = file_name.to_str() else {
-            todo!();
+            bail!("the file name of {} is not Unicode", log_dir.display());
         };
 
         for nth in 1.. {

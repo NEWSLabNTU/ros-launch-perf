@@ -1,3 +1,4 @@
+use crate::launch_dump::NodeRecord;
 use eyre::{bail, Context};
 use itertools::{chain, Itertools};
 use serde::{Deserialize, Serialize};
@@ -9,8 +10,7 @@ use std::{
     process::Command,
 };
 
-use crate::launch_dump::NodeRecord;
-
+/// The command line information to execute a ROS node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeCommandLine {
     pub command: Vec<String>,
@@ -26,6 +26,7 @@ pub struct NodeCommandLine {
 }
 
 impl NodeCommandLine {
+    /// Construct from a ROS node record in the launch dump.
     pub fn from_node_record(record: &NodeRecord, params_files_dir: &Path) -> eyre::Result<Self> {
         let NodeRecord {
             executable,
@@ -104,6 +105,7 @@ impl NodeCommandLine {
         })
     }
 
+    /// Construct from command line arguments.
     pub fn from_cmdline(cmdline: impl IntoIterator<Item = impl AsRef<str>>) -> eyre::Result<Self> {
         let (command, user_args, ros_args) = {
             let mut iter = cmdline.into_iter();
@@ -234,6 +236,7 @@ impl NodeCommandLine {
         })
     }
 
+    /// Create command line arguments.
     pub fn to_cmdline(&self, long_args: bool) -> Vec<String> {
         let Self {
             command,
@@ -336,6 +339,7 @@ impl NodeCommandLine {
         words
     }
 
+    /// Create a command object.
     pub fn to_command(&self, long_args: bool) -> Command {
         let cmdline = self.to_cmdline(long_args);
         let (program, args) = cmdline.split_first().unwrap();
@@ -344,6 +348,7 @@ impl NodeCommandLine {
         command
     }
 
+    /// Generate the shell script.
     pub fn to_shell(&self, long_args: bool) -> Vec<u8> {
         Itertools::intersperse(
             self.to_cmdline(long_args)

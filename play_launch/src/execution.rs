@@ -1,4 +1,4 @@
-use crate::context::{ExecutionContext, LoadNodeContext, NodeContainerContext, NodeContext};
+use crate::context::{ComposableNodeContext, ExecutionContext, NodeContainerContext, NodeContext};
 use eyre::WrapErr;
 use futures::{
     future::{BoxFuture, FutureExt},
@@ -16,6 +16,7 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
+/// The options to spawn a composable node loading process.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnComposableNodeConfig {
     pub max_concurrent_spawn: usize,
@@ -23,15 +24,20 @@ pub struct SpawnComposableNodeConfig {
     pub wait_timeout: Duration,
 }
 
-pub struct ContainerGroupContext {
+/// The set of node containers and composable nodes belong to the same
+/// container name.
+struct NodeContainerGroup {
     pub container_contexts: Vec<NodeContext>,
-    pub load_node_contexts: Vec<LoadNodeContext>,
+    pub composable_node_contexts: Vec<ComposableNodeContext>,
 }
 
-pub struct LoadComposableNodeGroupContext {
-    pub load_node_contexts: Vec<LoadNodeContext>,
+/// The set of composable nodes belong to the same container name.
+pub struct ComposableNodeGroup {
+    pub composable_node_contexts: Vec<ComposableNodeContext>,
 }
 
+/// The set of tasks waiting for the completion of node container and
+/// composable node loading/execution processes.
 pub enum ComposableNodeTasks {
     Standalone {
         wait_composable_node_tasks: Vec<BoxFuture<'static, eyre::Result<()>>>,
@@ -43,128 +49,7 @@ pub enum ComposableNodeTasks {
     },
 }
 
-pub fn build_container_groups(
-    container_names: &HashSet<String>,
-    container_contexts: Vec<NodeContainerContext>,
-    nice_load_node_contexts: Vec<LoadNodeContext>,
-) -> HashMap<String, ContainerGroupContext> {
-    let mut container_groups: HashMap<String, _> = container_names
-        .iter()
-        .map(|container_name| {
-            (
-                container_name.to_string(),
-                ContainerGroupContext {
-                    container_contexts: vec![],
-                    load_node_contexts: vec![],
-                },
-            )
-        })
-        .collect();
-
-    for context in container_contexts {
-        container_groups
-            .get_mut(context.node_container_name.as_str())
-            .expect("unable to find the container for the LoadNode request")
-            .container_contexts
-            .push(context.node_context);
-    }
-
-    for context in nice_load_node_contexts {
-        container_groups
-            .get_mut(&context.record.target_container_name)
-            .unwrap()
-            .load_node_contexts
-            .push(context);
-    }
-
-    container_groups
-}
-
-/// Spawn all node containers in each container group.
-pub fn spawn_node_containers(
-    container_groups: HashMap<String, ContainerGroupContext>,
-) -> (
-    Vec<impl Future<Output = eyre::Result<()>>>,
-    HashMap<String, LoadComposableNodeGroupContext>,
-) {
-    let (container_task_groups, load_node_groups): (Vec<_>, HashMap<_, _>) = container_groups
-        .into_iter()
-        .filter_map(|(container_name, group)| {
-            let ContainerGroupContext {
-                container_contexts,
-                load_node_contexts,
-            } = group;
-
-            // Spawn all container nodes in the group.
-            let container_tasks: Vec<_> = container_contexts
-                .into_iter()
-                .filter_map(|context| {
-                    let exec = match context.to_exec_context() {
-                        Ok(exec) => exec,
-                        Err(err) => {
-                            error!("Unable to prepare execution for node: {err}",);
-                            error!("which is caused by the node: {:#?}", context.record);
-                            return None;
-                        }
-                    };
-                    let ExecutionContext {
-                        log_name,
-                        output_dir,
-                        mut command,
-                    } = exec;
-
-                    let child = match command.spawn() {
-                        Ok(child) => child,
-                        Err(err) => {
-                            error!("{log_name} is unable to start: {err}",);
-                            error!("Check {}", output_dir.display());
-                            return None;
-                        }
-                    };
-                    let task = async move { wait_for_node(&log_name, &output_dir, child).await };
-
-                    Some(task)
-                })
-                .collect();
-
-            // If there is no container node spawned successfully,
-            // skip later load node tasks.
-            if container_tasks.is_empty() {
-                return None;
-            }
-
-            Some((container_name, container_tasks, load_node_contexts))
-        })
-        .map(|(container_name, container_tasks, load_node_contexts)| {
-            (
-                container_tasks,
-                (
-                    container_name,
-                    LoadComposableNodeGroupContext { load_node_contexts },
-                ),
-            )
-        })
-        .unzip();
-
-    let container_tasks = container_task_groups.into_iter().flatten().collect();
-
-    (container_tasks, load_node_groups)
-}
-
-/// Run all composable nodes in each container group.
-pub async fn run_load_composable_node_groups(
-    load_node_groups: HashMap<String, LoadComposableNodeGroupContext>,
-    config: SpawnComposableNodeConfig,
-) {
-    let load_node_contexts: Vec<_> = load_node_groups
-        .into_iter()
-        .flat_map(|(_container_name, context)| context.load_node_contexts)
-        .collect();
-
-    run_load_composable_nodes(load_node_contexts, config).await;
-}
-
-/// Spawn node processes.
+/// Spawn ROS node processes.
 pub fn spawn_nodes(node_contexts: Vec<NodeContext>) -> Vec<impl Future<Output = eyre::Result<()>>> {
     node_contexts
         .into_iter()
@@ -196,9 +81,11 @@ pub fn spawn_nodes(node_contexts: Vec<NodeContext>) -> Vec<impl Future<Output = 
         .collect()
 }
 
+/// Load composable node into containers or execute them in standalone
+/// containers.
 pub fn spawn_or_load_composable_nodes(
     container_contexts: Vec<NodeContainerContext>,
-    load_node_contexts: Vec<LoadNodeContext>,
+    load_node_contexts: Vec<ComposableNodeContext>,
     container_names: &HashSet<String>,
     standalone_composable_nodes: bool,
     load_orphan_composable_nodes: bool,
@@ -279,10 +166,137 @@ pub fn spawn_or_load_composable_nodes(
     }
 }
 
-pub fn spawn_node_containers_and_load_composable_nodes(
+/// Classify the container and composable node contexts into groups by
+/// their container name.
+fn build_container_groups(
     container_names: &HashSet<String>,
     container_contexts: Vec<NodeContainerContext>,
-    load_node_contexts: Vec<LoadNodeContext>,
+    nice_load_node_contexts: Vec<ComposableNodeContext>,
+) -> HashMap<String, NodeContainerGroup> {
+    let mut container_groups: HashMap<String, _> = container_names
+        .iter()
+        .map(|container_name| {
+            (
+                container_name.to_string(),
+                NodeContainerGroup {
+                    container_contexts: vec![],
+                    composable_node_contexts: vec![],
+                },
+            )
+        })
+        .collect();
+
+    for context in container_contexts {
+        container_groups
+            .get_mut(context.node_container_name.as_str())
+            .expect("unable to find the container for the LoadNode request")
+            .container_contexts
+            .push(context.node_context);
+    }
+
+    for context in nice_load_node_contexts {
+        container_groups
+            .get_mut(&context.record.target_container_name)
+            .unwrap()
+            .composable_node_contexts
+            .push(context);
+    }
+
+    container_groups
+}
+
+/// Spawn all node containers in each container group.
+fn spawn_node_containers(
+    container_groups: HashMap<String, NodeContainerGroup>,
+) -> (
+    Vec<impl Future<Output = eyre::Result<()>>>,
+    HashMap<String, ComposableNodeGroup>,
+) {
+    let (container_task_groups, load_node_groups): (Vec<_>, HashMap<_, _>) = container_groups
+        .into_iter()
+        .filter_map(|(container_name, group)| {
+            let NodeContainerGroup {
+                container_contexts,
+                composable_node_contexts: load_node_contexts,
+            } = group;
+
+            // Spawn all container nodes in the group.
+            let container_tasks: Vec<_> = container_contexts
+                .into_iter()
+                .filter_map(|context| {
+                    let exec = match context.to_exec_context() {
+                        Ok(exec) => exec,
+                        Err(err) => {
+                            error!("Unable to prepare execution for node: {err}",);
+                            error!("which is caused by the node: {:#?}", context.record);
+                            return None;
+                        }
+                    };
+                    let ExecutionContext {
+                        log_name,
+                        output_dir,
+                        mut command,
+                    } = exec;
+
+                    let child = match command.spawn() {
+                        Ok(child) => child,
+                        Err(err) => {
+                            error!("{log_name} is unable to start: {err}",);
+                            error!("Check {}", output_dir.display());
+                            return None;
+                        }
+                    };
+                    let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+
+                    Some(task)
+                })
+                .collect();
+
+            // If there is no container node spawned successfully,
+            // skip later load node tasks.
+            if container_tasks.is_empty() {
+                return None;
+            }
+
+            Some((container_name, container_tasks, load_node_contexts))
+        })
+        .map(|(container_name, container_tasks, load_node_contexts)| {
+            (
+                container_tasks,
+                (
+                    container_name,
+                    ComposableNodeGroup {
+                        composable_node_contexts: load_node_contexts,
+                    },
+                ),
+            )
+        })
+        .unzip();
+
+    let container_tasks = container_task_groups.into_iter().flatten().collect();
+
+    (container_tasks, load_node_groups)
+}
+
+/// Run all composable nodes in each container group.
+async fn run_load_composable_node_groups(
+    load_node_groups: HashMap<String, ComposableNodeGroup>,
+    config: SpawnComposableNodeConfig,
+) {
+    let load_node_contexts: Vec<_> = load_node_groups
+        .into_iter()
+        .flat_map(|(_container_name, context)| context.composable_node_contexts)
+        .collect();
+
+    run_load_composable_nodes(load_node_contexts, config).await;
+}
+
+/// Spawn node container processes and load all composable nodes to
+/// them.
+fn spawn_node_containers_and_load_composable_nodes(
+    container_names: &HashSet<String>,
+    container_contexts: Vec<NodeContainerContext>,
+    load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
     load_node_delay: Duration,
 ) -> (
@@ -314,13 +328,13 @@ pub fn spawn_node_containers_and_load_composable_nodes(
 }
 
 /// Spawn standalone composable nodes.
-pub fn spawn_standalone_composable_nodes(
-    load_node_contexts: Vec<LoadNodeContext>,
+fn spawn_standalone_composable_nodes(
+    load_node_contexts: Vec<ComposableNodeContext>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     load_node_contexts
         .into_iter()
         .filter_map(|context| {
-            let LoadNodeContext {
+            let ComposableNodeContext {
                 log_name,
                 output_dir,
                 ..
@@ -342,7 +356,7 @@ pub fn spawn_standalone_composable_nodes(
                 }
             };
             let task = async move {
-                let LoadNodeContext {
+                let ComposableNodeContext {
                     log_name,
                     output_dir,
                     ..
@@ -354,9 +368,9 @@ pub fn spawn_standalone_composable_nodes(
         .collect()
 }
 
-/// Run composable nodes.
-pub async fn run_load_composable_nodes(
-    load_node_contexts: Vec<LoadNodeContext>,
+/// Load a set of composable nodes.
+async fn run_load_composable_nodes(
+    load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
 ) {
     let SpawnComposableNodeConfig {
@@ -368,7 +382,9 @@ pub async fn run_load_composable_nodes(
     let total_count = load_node_contexts.len();
 
     let mut futures = futures::stream::iter(load_node_contexts.into_iter())
-        .map(|context| async move { run_load_node(&context, wait_timeout, max_attempts).await })
+        .map(|context| async move {
+            run_load_composable_node(&context, wait_timeout, max_attempts).await
+        })
         .buffer_unordered(max_concurrent_spawn)
         .zip(futures::stream::iter(1..));
 
@@ -379,8 +395,13 @@ pub async fn run_load_composable_nodes(
     }
 }
 
-async fn run_load_node(context: &LoadNodeContext, wait_timeout: Duration, max_attempts: usize) {
-    let LoadNodeContext {
+/// Load one composable node up to a max number of failing attempts.
+async fn run_load_composable_node(
+    context: &ComposableNodeContext,
+    wait_timeout: Duration,
+    max_attempts: usize,
+) {
+    let ComposableNodeContext {
         log_name,
         output_dir,
         ..
@@ -388,7 +409,7 @@ async fn run_load_node(context: &LoadNodeContext, wait_timeout: Duration, max_at
     debug!("{log_name} is loading");
 
     for round in 1..=max_attempts {
-        match run_load_node_once(context, wait_timeout, round).await {
+        match run_load_composable_node_once(context, wait_timeout, round).await {
             Ok(true) => return,
             Ok(false) => {
                 warn!("{log_name} fails to start. Retrying... ({round}/{max_attempts})");
@@ -405,12 +426,13 @@ async fn run_load_node(context: &LoadNodeContext, wait_timeout: Duration, max_at
     error!("Check {}", output_dir.display());
 }
 
-async fn run_load_node_once(
-    context: &LoadNodeContext,
+/// Load one composable node once.
+async fn run_load_composable_node_once(
+    context: &ComposableNodeContext,
     timeout: Duration,
     round: usize,
 ) -> eyre::Result<bool> {
-    let LoadNodeContext {
+    let ComposableNodeContext {
         log_name,
         output_dir,
         ..
@@ -447,7 +469,7 @@ async fn run_load_node_once(
         }
     };
 
-    save_load_node_status(&status, output_dir, log_name)?;
+    save_composable_node_status(&status, output_dir, log_name)?;
 
     if !status.success() {
         warn!("{log_name} falis to start");
@@ -457,7 +479,8 @@ async fn run_load_node_once(
     Ok(true)
 }
 
-pub async fn wait_for_node(
+/// Wait for the completion of a node process.
+async fn wait_for_node(
     log_name: &str,
     output_dir: &Path,
     mut child: tokio::process::Child,
@@ -473,6 +496,7 @@ pub async fn wait_for_node(
     eyre::Ok(())
 }
 
+/// Save the status code for a completed node process.
 fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> eyre::Result<()> {
     let status_path = output_dir.join("status");
 
@@ -505,7 +529,9 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
     eyre::Ok(())
 }
 
-fn save_load_node_status(
+/// Save the status code for a completed composable node
+/// loading/execution process.
+fn save_composable_node_status(
     status: &ExitStatus,
     output_dir: &Path,
     log_name: &str,
@@ -540,64 +566,3 @@ fn save_load_node_status(
 
     eyre::Ok(())
 }
-
-// fn prepare_load_composable_node_command(
-//     context: &LoadNodeContext,
-//     round: usize,
-// ) -> eyre::Result<Command> {
-//     let LoadNodeContext {
-//         output_dir, record, ..
-//     } = context;
-
-//     let command = record.to_command(false);
-//     let stdout_path = output_dir.join(format!("out.{round}"));
-//     let stderr_path = output_dir.join(format!("err.{round}"));
-//     let cmdline_path = output_dir.join(format!("cmdline.{round}"));
-
-//     fs::create_dir_all(output_dir)?;
-
-//     {
-//         let mut cmdline_file = File::create(cmdline_path)?;
-//         cmdline_file.write_all(&record.to_shell(false))?;
-//     }
-
-//     let stdout_file = File::create(stdout_path)?;
-//     let stderr_file = File::create(&stderr_path)?;
-
-//     let mut command: Command = command.into();
-//     command.kill_on_drop(true);
-//     command.stdin(Stdio::null());
-//     command.stdout(stdout_file);
-//     command.stderr(stderr_file);
-
-//     eyre::Ok(command)
-// }
-
-// fn prepare_standalone_composable_node_command(context: &LoadNodeContext) -> eyre::Result<Command> {
-//     let LoadNodeContext {
-//         output_dir, record, ..
-//     } = context;
-
-//     let command = record.to_command(true);
-//     let stdout_path = output_dir.join("out");
-//     let stderr_path = output_dir.join("err");
-//     let cmdline_path = output_dir.join("cmdline");
-
-//     fs::create_dir_all(output_dir)?;
-
-//     {
-//         let mut cmdline_file = File::create(cmdline_path)?;
-//         cmdline_file.write_all(&record.to_shell(true))?;
-//     }
-
-//     let stdout_file = File::create(stdout_path)?;
-//     let stderr_file = File::create(&stderr_path)?;
-
-//     let mut command: Command = command.into();
-//     command.kill_on_drop(true);
-//     command.stdin(Stdio::null());
-//     command.stdout(stdout_file);
-//     command.stderr(stderr_file);
-
-//     eyre::Ok(command)
-// }

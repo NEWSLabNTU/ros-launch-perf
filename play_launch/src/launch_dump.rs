@@ -14,20 +14,23 @@ use std::{
 
 pub type ParameterValue = String;
 
+/// The serialization format for a recorded launch.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LaunchDump {
     pub node: Vec<NodeRecord>,
-    pub load_node: Vec<LoadNodeRecord>,
-    pub container: Vec<ComposableNodeContainerRecord>,
+    pub load_node: Vec<ComposableNodeRecord>,
+    pub container: Vec<NodeContainerRecord>,
     pub file_data: HashMap<PathBuf, String>,
 }
 
+/// The serialization format for a node container record.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ComposableNodeContainerRecord {
+pub struct NodeContainerRecord {
     pub namespace: String,
     pub name: String,
 }
 
+/// The serialization format for a ROS node record.
 #[derive(Debug, Clone, Deserialize)]
 pub struct NodeRecord {
     pub executable: String,
@@ -45,8 +48,9 @@ pub struct NodeRecord {
     pub cmd: Vec<String>,
 }
 
+/// The serialization format for a composable node record.
 #[derive(Debug, Clone, Deserialize)]
-pub struct LoadNodeRecord {
+pub struct ComposableNodeRecord {
     pub package: String,
     pub plugin: String,
     pub target_container_name: String,
@@ -64,7 +68,7 @@ pub struct LoadNodeRecord {
     pub extra_args: HashMap<String, String>,
 }
 
-impl LoadNodeRecord {
+impl ComposableNodeRecord {
     fn to_cmdline(&self, standalone: bool) -> Vec<String> {
         if standalone {
             self.to_cmdline_standalone()
@@ -207,6 +211,7 @@ impl LoadNodeRecord {
     }
 }
 
+/// Read an deserialize the launch record dump.
 pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     let reader = BufReader::new(File::open(dump_file)?);
     let launch_dump = serde_json::from_reader(reader)?;
