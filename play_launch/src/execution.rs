@@ -347,7 +347,7 @@ pub fn spawn_standalone_composable_nodes(
                     output_dir,
                     ..
                 } = &context;
-                wait_for_node(&log_name, &output_dir, child).await
+                wait_for_node(log_name, output_dir, child).await
             };
             Some(task)
         })

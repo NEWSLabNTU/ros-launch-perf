@@ -117,7 +117,6 @@ impl LoadNodeRecord {
             .map(|level| ["--log-level", level])
             .into_iter()
             .flatten()
-            .into_iter()
             .map(Cow::from);
 
         chain!(
@@ -176,7 +175,6 @@ impl LoadNodeRecord {
             .map(|level| ["--log-level", level])
             .into_iter()
             .flatten()
-            .into_iter()
             .map(Cow::from);
 
         chain!(
@@ -200,12 +198,12 @@ impl LoadNodeRecord {
 
     pub fn to_shell(&self, standalone: bool) -> Vec<u8> {
         let cmdline = self.to_cmdline(standalone);
-        cmdline
-            .into_iter()
-            .map(|w| shell_quote::Sh::quote_vec(&w))
-            .intersperse(vec![b' '])
-            .flatten()
-            .collect()
+        Itertools::intersperse(
+            cmdline.into_iter().map(|w| shell_quote::Sh::quote_vec(&w)),
+            vec![b' '],
+        )
+        .flatten()
+        .collect()
     }
 }
 

@@ -115,7 +115,7 @@ impl NodeContext {
         let stderr_path = output_dir.join("err");
         let cmdline_path = output_dir.join("cmdline");
 
-        fs::create_dir_all(&output_dir)?;
+        fs::create_dir_all(output_dir)?;
 
         {
             let mut cmdline_file = File::create(cmdline_path)?;

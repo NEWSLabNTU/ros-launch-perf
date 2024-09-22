@@ -178,16 +178,9 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             error!("{err}");
         }
 
-        let _ = wait_futures.remove(ix);
+        let future_to_discard = wait_futures.remove(ix);
+        drop(future_to_discard);
     }
-
-    // wait_futures
-    //     .for_each(|result| async move {
-    //         if let Err(err) = result {
-    //             error!("{err}");
-    //         }
-    //     })
-    //     .await;
 
     Ok(())
 }

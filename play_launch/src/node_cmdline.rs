@@ -345,11 +345,13 @@ impl NodeCommandLine {
     }
 
     pub fn to_shell(&self, long_args: bool) -> Vec<u8> {
-        self.to_cmdline(long_args)
-            .into_iter()
-            .map(|arg| shell_quote::Sh::quote_vec(&arg))
-            .intersperse(vec![b' '])
-            .flatten()
-            .collect()
+        Itertools::intersperse(
+            self.to_cmdline(long_args)
+                .into_iter()
+                .map(|arg| shell_quote::Sh::quote_vec(&arg)),
+            vec![b' '],
+        )
+        .flatten()
+        .collect()
     }
 }
