@@ -76,7 +76,73 @@ pub struct LoadNodeRecord {
 }
 
 impl LoadNodeRecord {
-    fn to_cmdline(&self) -> Vec<String> {
+    fn to_cmdline(&self, standalone: bool) -> Vec<String> {
+        if standalone {
+            self.to_cmdline_standalone()
+        } else {
+            self.to_cmdline_component()
+        }
+    }
+
+    fn to_cmdline_standalone(&self) -> Vec<String> {
+        let Self {
+            package,
+            plugin,
+            namespace,
+            log_level,
+            remaps,
+            params,
+            extra_args,
+            node_name,
+            target_container_name: _,
+        } = self;
+
+        let command = [
+            "ros2",
+            "component",
+            "standalone",
+            package,
+            plugin,
+            "-n",
+            node_name,
+            "--node-namespace",
+            namespace,
+        ]
+        .into_iter()
+        .map(Cow::from);
+
+        let remap_args = remaps
+            .iter()
+            .flat_map(|(src, tgt)| [Cow::from("-r"), format!("{src}:={tgt}").into()]);
+
+        let param_args = params
+            .iter()
+            .flat_map(|(name, value)| [Cow::from("-p"), format!("{name}:={}", value).into()]);
+
+        let extra_arg_args = extra_args
+            .iter()
+            .flat_map(|(name, value)| [Cow::from("-e"), format!("{name}:={}", value).into()]);
+
+        let log_level_args = log_level
+            .as_deref()
+            .map(|level| ["--log-level", level])
+            .into_iter()
+            .flatten()
+            .into_iter()
+            .map(Cow::from);
+
+        chain!(
+            command,
+            log_level_args,
+            remap_args,
+            param_args,
+            extra_arg_args
+        )
+        .map(|arg| arg.to_string())
+        .collect()
+    }
+
+    fn to_cmdline_component(&self) -> Vec<String> {
         let Self {
             package,
             plugin,
@@ -135,16 +201,16 @@ impl LoadNodeRecord {
         .collect()
     }
 
-    pub fn to_command(&self) -> Command {
-        let cmdline = self.to_cmdline();
+    pub fn to_command(&self, standalone: bool) -> Command {
+        let cmdline = self.to_cmdline(standalone);
         let (program, args) = cmdline.split_first().unwrap();
         let mut command = Command::new(program);
         command.args(args);
         command
     }
 
-    pub fn to_shell(&self) -> Vec<u8> {
-        let cmdline = self.to_cmdline();
+    pub fn to_shell(&self, standalone: bool) -> Vec<u8> {
+        let cmdline = self.to_cmdline(standalone);
         cmdline
             .into_iter()
             .map(|w| shell_quote::Sh::quote_vec(&w))

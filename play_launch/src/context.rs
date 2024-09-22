@@ -13,31 +13,30 @@ use std::{
     process::Stdio,
 };
 
-pub struct NodeContextSet<'a> {
-    pub container_contexts: Vec<NodeContainerContext<'a>>,
-    pub pure_node_contexts: Vec<NodeContext<'a>>,
+pub struct NodeContextSet {
+    pub container_contexts: Vec<NodeContainerContext>,
+    pub noncontainer_node_contexts: Vec<NodeContext>,
 }
 
-pub struct LoadNodeContextSet<'a> {
-    pub nice_load_node_contexts: Vec<LoadNodeContext<'a>>,
-    pub orphan_load_node_contexts: Vec<LoadNodeContext<'a>>,
+pub struct LoadNodeContextSet {
+    pub load_node_contexts: Vec<LoadNodeContext>,
 }
 
-pub struct LoadNodeContext<'a> {
+pub struct LoadNodeContext {
     pub log_name: String,
     pub output_dir: PathBuf,
-    pub record: &'a LoadNodeRecord,
+    pub record: LoadNodeRecord,
 }
 
-pub struct NodeContext<'a> {
-    pub record: &'a NodeRecord,
+pub struct NodeContext {
+    pub record: NodeRecord,
     pub cmdline: NodeCommandLine,
     pub exec: ExecutionContext,
 }
 
-pub struct NodeContainerContext<'a> {
+pub struct NodeContainerContext {
     pub node_container_name: String,
-    pub node_context: NodeContext<'a>,
+    pub node_context: NodeContext,
 }
 
 pub struct ExecutionContext {
@@ -46,12 +45,12 @@ pub struct ExecutionContext {
     pub command: tokio::process::Command,
 }
 
-pub fn prepare_node_contexts<'a>(
-    launch_dump: &'a LaunchDump,
+pub fn prepare_node_contexts(
+    launch_dump: &LaunchDump,
     params_files_dir: &Path,
     node_log_dir: &Path,
     container_names: &HashSet<String>,
-) -> eyre::Result<NodeContextSet<'a>> {
+) -> eyre::Result<NodeContextSet> {
     let node_cmdlines = load_and_transform_node_records(launch_dump, params_files_dir)?;
     let node_commands: Result<Vec<_>, _> = node_cmdlines
         .into_par_iter()
@@ -86,21 +85,21 @@ pub fn prepare_node_contexts<'a>(
                         Either::Left(NodeContainerContext {
                             node_container_name: container_key,
                             node_context: NodeContext {
-                                record,
+                                record: record.clone(),
                                 cmdline,
                                 exec,
                             },
                         })
                     } else {
                         Either::Right(NodeContext {
-                            record,
+                            record: record.clone(),
                             cmdline,
                             exec,
                         })
                     }
                 }
                 _ => Either::Right(NodeContext {
-                    record,
+                    record: record.clone(),
                     cmdline,
                     exec,
                 }),
@@ -109,17 +108,16 @@ pub fn prepare_node_contexts<'a>(
 
     Ok(NodeContextSet {
         container_contexts,
-        pure_node_contexts,
+        noncontainer_node_contexts: pure_node_contexts,
     })
 }
 
-pub fn prepare_load_node_contexts<'a>(
-    launch_dump: &'a LaunchDump,
+pub fn prepare_load_node_contexts(
+    launch_dump: &LaunchDump,
     load_node_log_dir: &Path,
-    container_names: &HashSet<String>,
-) -> eyre::Result<LoadNodeContextSet<'a>> {
+) -> eyre::Result<LoadNodeContextSet> {
     let load_node_records = &launch_dump.load_node;
-    let load_node_commands: Result<Vec<_>, _> = load_node_records
+    let load_node_contexts: Result<Vec<_>, _> = load_node_records
         .par_iter()
         .map(|record| {
             let LoadNodeRecord {
@@ -134,29 +132,15 @@ pub fn prepare_load_node_contexts<'a>(
                 .join(plugin);
             let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
             eyre::Ok(LoadNodeContext {
-                record,
+                record: record.clone(),
                 log_name,
                 output_dir,
             })
         })
         .collect();
-    let load_node_commands = load_node_commands?;
+    let load_node_contexts = load_node_contexts?;
 
-    let (nice_load_node_contexts, orphan_load_node_contexts): (Vec<_>, Vec<_>) =
-        load_node_commands.into_par_iter().partition_map(|context| {
-            use rayon::iter::Either;
-
-            if container_names.contains(&context.record.target_container_name) {
-                Either::Left(context)
-            } else {
-                Either::Right(context)
-            }
-        });
-
-    Ok(LoadNodeContextSet {
-        nice_load_node_contexts,
-        orphan_load_node_contexts,
-    })
+    Ok(LoadNodeContextSet { load_node_contexts })
 }
 
 fn prepare_node_command(
