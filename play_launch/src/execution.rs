@@ -93,7 +93,7 @@ pub fn spawn_or_load_composable_nodes(
     load_node_delay: Duration,
 ) -> ComposableNodeTasks {
     if standalone_composable_nodes {
-        info!("standalone composable node:\t{}", load_node_contexts.len());
+        info!("standalone composable node: {}", load_node_contexts.len());
 
         let standalone_composable_node_tasks =
             spawn_standalone_composable_nodes(load_node_contexts);
@@ -117,9 +117,9 @@ pub fn spawn_or_load_composable_nodes(
                 }
             });
 
-        info!("containers:\t{}", container_names.len());
+        info!("node containers: {}", container_names.len());
         info!(
-            "loaded composable node:\t{}",
+            "loaded composable node: {}",
             nice_load_node_contexts.len() + orphan_load_node_contexts.len()
         );
 
@@ -144,7 +144,7 @@ pub fn spawn_or_load_composable_nodes(
             None
         } else if load_orphan_composable_nodes {
             info!(
-                "orphan composable node:\t{}",
+                "orphan composable node: {}",
                 orphan_load_node_contexts.len()
             );
             let task =

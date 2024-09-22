@@ -120,7 +120,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
 
     // Report the number of entities
-    info!("nodes:\t{}", pure_node_contexts.len());
+    info!("nodes: {}", pure_node_contexts.len());
 
     // Spawn non-container nodes
     let non_container_node_tasks = spawn_nodes(pure_node_contexts)

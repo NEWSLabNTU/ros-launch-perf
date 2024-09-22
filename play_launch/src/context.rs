@@ -138,7 +138,7 @@ impl NodeContext {
         command.stdout(stdout_file);
         command.stderr(stderr_file);
 
-        let log_name = format!("NODE {package} {exec_name}");
+        let log_name = format!("NODE '{package}/{exec_name}'");
         Ok(ExecutionContext {
             log_name,
             output_dir: output_dir.to_path_buf(),
@@ -254,7 +254,7 @@ pub fn prepare_composable_node_contexts(
                 .join(target_container_name.replace("/", "@"))
                 .join(package)
                 .join(plugin);
-            let log_name = format!("COMPOSABLE_NODE {target_container_name} {package} {plugin}");
+            let log_name = format!("COMPOSABLE_NODE '{package}/{plugin}'");
             eyre::Ok(ComposableNodeContext {
                 record: record.clone(),
                 log_name,
