@@ -18,7 +18,7 @@ pub struct Options {
     #[clap(long, default_value = "3")]
     pub load_node_attempts: usize,
 
-    #[clap(long, default_value = "5")]
+    #[clap(long, default_value = "10")]
     pub max_concurrent_load_node_spawn: usize,
 
     #[clap(long)]
