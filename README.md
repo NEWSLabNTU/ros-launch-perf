@@ -29,6 +29,29 @@ launch. Then, analyze and replay the launch execution.
   Visit the [pypi site](https://pypi.org/project/Procpath/) to install
   this tool. This is used for resource usage profiling.
 
+## Installation
+
+Clone the project Git repository.
+
+```sh
+git clone https://github.com/NEWSLabNTU/ros-launch-perf.git
+```
+
+Compile the project and install the `dump_launch` and `play_launch`
+commands on the system.
+
+```sh
+just install
+```
+
+In case that you want to uninstall these commands, the just receipt is
+done for you.
+
+```sh
+just uninstall
+```
+
+
 ## Usage
 
 ### Record a Launch Execution
@@ -38,7 +61,7 @@ simulation and generates `record.json` dump. This dump file records
 all nodes and parameters to perform the simulation.
 
 ```sh
-just record \
+dump_launch \
   /path_to_autoware/src/launcher/autoware_launch/autoware_launch/launch/planning_simulator.launch.xml \
   map_path:=$HOME/autoware_map/sample-map-planning vehicle_model:=sample_vehicle \
   sensor_model:=sample_sensor_kit
@@ -49,14 +72,7 @@ just record \
 This command loads the `record.json` and perform the launch execution.
 
 ```sh
-just play
-```
-
-(Optional) You can generate the shell script used to execute the
-launch.
-
-```sh
-just generate_script
+play_launch
 ```
 
 ## Profiling Resource Usage

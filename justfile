@@ -5,6 +5,14 @@ build:
     rye build --all
     cargo build --release --all-targets
 
+install: build
+    pip install -U dist/dump_launch-0.1.0-py3-none-any.whl
+    cargo install --path play_launch
+
+uninstall:
+    pip uninstall -y dump_launch
+    cargo uninstall play_launch
+
 record launch_file *params:
     rye run dump_launch {{launch_file}} {{params}}
 
@@ -13,7 +21,6 @@ generate_script:
     cargo run --release --bin play_launch -- --print-shell
 
 play:
-    mkdir -p params
     cargo run --release --bin play_launch --
     # cargo run --release --bin play_launch -- --standalone-composable-nodes
     # cargo run --release --bin play_launch -- --max-concurrent-load-node-spawn=100
