@@ -97,7 +97,11 @@ class LaunchInspector:
 
         # Used to collect executed nodes in this launch
         self.__launch_dump: LaunchDump = LaunchDump(
-            load_node=list(), file_data=dict(), node=list(), container=list()
+            load_node=list(),
+            file_data=dict(),
+            node=list(),
+            container=list(),
+            lifecycle_node=list(),
         )
 
     def emit_event(self, event: Event) -> None:

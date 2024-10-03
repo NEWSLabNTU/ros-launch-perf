@@ -20,6 +20,7 @@ pub struct LaunchDump {
     pub node: Vec<NodeRecord>,
     pub load_node: Vec<ComposableNodeRecord>,
     pub container: Vec<NodeContainerRecord>,
+    pub lifecycle_node: Vec<String>,
     pub file_data: HashMap<PathBuf, String>,
 }
 

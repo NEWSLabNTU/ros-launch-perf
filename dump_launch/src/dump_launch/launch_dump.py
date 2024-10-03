@@ -43,4 +43,5 @@ class LaunchDump:
     node: List[NodeRecord]
     load_node: List[LoadNodeRecord]
     container: List[ComposableNodeContainerRecord]
+    lifecycle_node: List[Text]
     file_data: Dict[Text, Text]
