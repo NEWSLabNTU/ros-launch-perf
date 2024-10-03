@@ -18,12 +18,6 @@ launch. Then, analyze and replay the launch execution.
   project.
 
 
-- just
-
-  Read the [book](https://just.systems/man/en/) and follow
-  installation instructions. It enables us to use `justfile`, a modern
-  version of `Makefile`.
-
 - procpath
 
   Visit the [pypi site](https://pypi.org/project/Procpath/) to install
@@ -41,14 +35,13 @@ Compile the project and install the `dump_launch` and `play_launch`
 commands on the system.
 
 ```sh
-just install
+make install
 ```
 
-In case that you want to uninstall these commands, the just receipt is
-done for you.
+You can uninstall these commands afterwards.
 
 ```sh
-just uninstall
+make uninstall
 ```
 
 
@@ -82,13 +75,13 @@ profile per-process resource usage into `profiling.sqlite` database
 file. Press Ctrl-C to terminate the profiling.
 
 ```sh
-just profile
+make profile
 ```
 
 Afterwards, you can generate SVG timecharts using this command.
 
 ```sh
-just plot
+make plot
 ```
 
 ## License
