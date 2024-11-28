@@ -3,6 +3,7 @@ from typing import Optional
 from typing import Dict
 
 
+import launch
 from launch_ros.actions.node import Node
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
