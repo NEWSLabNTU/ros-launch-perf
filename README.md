@@ -5,7 +5,18 @@ launch. Then, analyze and replay the launch execution.
 
 [![Watch the demo](demo.png)](demo.webm)
 
-## Prerequisites
+
+## Install Pre-built Packages (Recommended)
+
+Find the latest pacakges in the [Release
+page](https://github.com/NEWSLabNTU/ros-launch-perf/releases) and
+follow the instructions.
+
+
+
+## Install from Source
+
+### Prerequisites
 
 - Rust toolchain
 
@@ -23,7 +34,8 @@ launch. Then, analyze and replay the launch execution.
   Visit the [pypi site](https://pypi.org/project/Procpath/) to install
   this tool. This is used for resource usage profiling.
 
-## Installation
+
+### Build This Project
 
 Clone the project Git repository.
 
@@ -47,20 +59,31 @@ make uninstall
 
 ## Usage
 
-### Record a Launch Execution
+The workflow goes in the **dump** step and then the **play** step. The
+dump step cans the launch file and creates a `record.json`. The play
+step reads the dump and executes the launch plan. The dump only needs
+to be done once.
 
-This example analyzes the launch file to run Autoware planning
-simulation and generates `record.json` dump. This dump file records
-all nodes and parameters to perform the simulation.
+### Step 1: Record a Launch Execution
+
+The dump step runs in the same way we run a launch file. In this
+Autoware simulation example, simply replace `ros2 launch` with
+`dump_launch`.
 
 ```sh
+## This is the original launch command.
+# ros2 launch \
+#     autoware_launch planning_simulator.launch.xml \
+#     map_path:=$HOME/autoware_map/sample-map-planning \
+#     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
+
 dump_launch \
-  /path_to_autoware/src/launcher/autoware_launch/autoware_launch/launch/planning_simulator.launch.xml \
-  map_path:=$HOME/autoware_map/sample-map-planning vehicle_model:=sample_vehicle \
-  sensor_model:=sample_sensor_kit
+    autoware_launch planning_simulator.launch.xml \
+    map_path:=$HOME/autoware_map/sample-map-planning \
+    vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
 ```
 
-### Play the Launch
+### Step 3: Play the Launch Record
 
 This command loads the `record.json` and perform the launch execution.
 
