@@ -14,6 +14,9 @@ install: build
 	pip install -U dist/dump_launch-0.1.0-py3-none-any.whl
 	cargo install --path play_launch
 
+debian:
+	cargo deb
+
 uninstall:
 	pip uninstall -y dump_launch
 	cargo uninstall play_launch
