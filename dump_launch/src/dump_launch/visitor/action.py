@@ -5,6 +5,7 @@ from typing import Text
 from typing import Tuple
 
 from launch.action import Action
+from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.utilities import is_a, is_a_subclass
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
@@ -22,6 +23,7 @@ from .load_composable_nodes import visit_load_composable_nodes
 from .lifecycle_node import visit_lifecycle_node
 from .node import visit_node
 from .composable_node_container import visit_composable_node_container
+from .include_launch_description import visit_include_launch_description
 
 
 def visit_action(
@@ -58,5 +60,9 @@ def visit_action_by_class(
 
     elif is_a(action, Node):
         return visit_node(action, context, dump)
+
+    elif is_a(action, IncludeLaunchDescription):
+        return visit_include_launch_description(action, context, dump)
+
     else:
         return action.execute(context)
