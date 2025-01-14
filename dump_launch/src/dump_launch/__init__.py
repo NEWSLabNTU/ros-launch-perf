@@ -51,7 +51,7 @@ def main() -> int:
     if os.path.exists(output_file):
         nth = 1
         while True:
-            new_path = f"args.output.{nth}"
+            new_path = f"{output_file}.{nth}"
             if not os.path.exists(new_path):
                 os.rename(output_file, new_path)
                 break
