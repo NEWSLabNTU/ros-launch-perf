@@ -24,29 +24,6 @@ from launch_ros.substitutions.find_package import FindPackageShare
 from launch_ros.substitutions.parameter import Parameter
 from launch_ros.substitutions.executable_in_package import ExecutableInPackage
 
-from ..launch_dump import (
-    SubstitutionExpr,
-    SubstitutionToken,
-    SubstitutionTokenKind,
-    TextToken,
-    EnvironmentVariableToken,
-    AnonNameToken,
-    AndToken,
-    OrToken,
-    NotToken,
-    CommandToken,
-    FindExecutableToken,
-    LaunchConfigurationToken,
-    LocalToken,
-    PathJoinToken,
-    PythonExpressionToken,
-    ThisLaunchFileToken,
-    ThisLaunchFileDirToken,
-    FindPackageShareToken,
-    ParameterToken,
-    ExecutableInPackageToken,
-)
-
 
 class SubstitutionTokenKind(Enum):
     TEXT = "text"

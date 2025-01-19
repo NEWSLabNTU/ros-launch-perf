@@ -16,60 +16,22 @@ from launch_ros.actions.load_composable_nodes import LoadComposableNodes
 from ..launch_dump import LaunchDump, LaunchDescriptionRecord
 from .node import record_node
 from .declare_launch_argument import record_declare_launch_argument
-
+from .entity import record_entity
 
 # @dataclass
 # class LaunchDescriptionSpec:
 #     pass
 
 
-def record_launch_description(
-    action: IncludeLaunchDescription,
-    desc: LaunchDescription,
+def record_include_launch_description(
+    include: IncludeLaunchDescription,
     context: LaunchContext,
     dump: LaunchDump,
 ):
-    source = action.launch_description_source
+    source = include.launch_description_source
+    launch_description = source.get_launch_description(context)
     file_path = source.location
+    # print("#########", file_path)
 
-    print("#########", file_path)
-
-    node = list()
-
-    for entity in desc.entities:
-        if is_a(entity, DeclareLaunchArgument):
-            record_declare_launch_argument(entity)
-
-        elif is_a(entity, SetLaunchConfiguration):
-            # TODO
-            pass
-
-        elif is_a(entity, OpaqueFunction):
-            # TODO
-            pass
-
-        elif is_a(entity, GroupAction):
-            # TODO
-            pass
-
-        elif is_a(entity, IncludeLaunchDescription):
-            # TODO
-            pass
-
-        elif is_a(entity, ComposableNodeContainer):
-            # TODO
-            pass
-
-        elif is_a(entity, Node):
-            record_node(entity)
-
-        elif is_a(entity, PushRosNamespace):
-            # TODO
-            pass
-
-        elif is_a(entity, LoadComposableNodes):
-            # TODO
-            pass
-
-        else:
-            print(entity)
+    for entity in launch_description.entities:
+        record_entity(entity)

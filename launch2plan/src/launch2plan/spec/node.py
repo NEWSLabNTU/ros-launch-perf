@@ -8,24 +8,27 @@ from launch.utilities import is_a
 from .substitution import record_substitution
 from ..utils import param_to_kv
 
+from .substitution import SubstitutionExpr
+
 
 class NodeSpec:
-    executable: Text  # TODO
-    package: Optional[Text]
-    name: Optional[Text]
-    namespace: Optional[Text]
-    exec_name: Optional[Text]
+    executable: SubstitutionExpr
+    package: Optional[SubstitutionExpr]
+    name: Optional[SubstitutionExpr]
+    namespace: Optional[SubstitutionExpr]
     params: List[Tuple[Text, Text]]
     params_files: List[Text]
     remaps: List[Tuple[Text, Text]]
-    ros_args: Optional[List[Text]]
-    args: Optional[List[Text]]
-    cmd: List[Text]
+    ros_args: Optional[List[SubstitutionExpr]]
+    args: Optional[List[SubstitutionExpr]]
+    cmd: List[SubstitutionExpr]
 
 
 def record_node(node: Node) -> NodeSpec:
     executable = record_substitution(node.node_executable)
     package = record_substitution(node.node_package)
+    name = record_substitution(node.node_name)
+    cmd = record_substitution(node.cmd)
 
     ros_args = None
     if node._Node__ros_arguments is not None:
@@ -77,10 +80,9 @@ def record_node(node: Node) -> NodeSpec:
     spec = NodeSpec(
         executable=executable,
         package=package,
-        name=node._Node__expanded_node_name,
+        name=name,
         namespace=namespace,
-        exec_name=node.name,
-        cmd=node.cmd,
+        cmd=cmd,
         remaps=remaps,
         params=params,
         params_files=params_files,
