@@ -74,10 +74,11 @@ def main() -> int:
     inspector.include_launch_description(launch_description)
 
     inspector.run(shutdown_when_idle=True)
-    dump = inspector.dump()
 
-    with open(output_file, "w") as fp:
-        json.dump(dump, fp, sort_keys=True, indent=4)
+    # TODO
+    # dump = inspector.dump()
+    # with open(output_file, "w") as fp:
+    #     json.dump(dump, fp, sort_keys=True, indent=4)
 
     return 0
 

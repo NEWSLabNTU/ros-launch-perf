@@ -16,11 +16,10 @@ from launch.utilities import normalize_to_list_of_substitutions
 from ..utils import param_to_kv
 
 from .execute_process import visit_execute_process
-from ..launch_dump import LaunchDump, NodeRecord
 
 
 def visit_node(
-    node: Node, context: LaunchContext, dump: LaunchDump
+    node: Node, context: LaunchContext
 ) -> Optional[List[LaunchDescriptionEntity]]:
     node._perform_substitutions(context)
 
@@ -67,7 +66,7 @@ def visit_node(
     context.extend_locals({"ros_specific_arguments": ros_specific_arguments})
 
     # Visit ExecuteProcess
-    ret = visit_execute_process(node, context, dump)
+    ret = visit_execute_process(node, context)
 
     if node.is_node_name_fully_specified():
         add_node_name(context, node.node_name)
@@ -91,7 +90,6 @@ def visit_node(
                 with open(path, "r") as fp:
                     data = fp.read()
                     params_files.append(data)
-                    dump.file_data[path] = data
             else:
                 assert is_a(entry, Parameter)
                 name, value = param_to_kv(entry)
@@ -101,21 +99,5 @@ def visit_node(
         remaps = list()
     else:
         remaps = node.expanded_remapping_rules
-
-    # Store a node record
-    record = NodeRecord(
-        executable=executable,
-        package=package,
-        name=node._Node__expanded_node_name,
-        namespace=namespace,
-        exec_name=node.name,
-        cmd=node.cmd,
-        remaps=remaps,
-        params=params,
-        params_files=params_files,
-        ros_args=ros_args,
-        args=args,
-    )
-    dump.node.append(record)
 
     return ret

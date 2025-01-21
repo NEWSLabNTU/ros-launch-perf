@@ -7,11 +7,10 @@ from launch.launch_description_entity import LaunchDescriptionEntity
 
 
 from .node import visit_node
-from ..launch_dump import LaunchDump
 
 
 def visit_lifecycle_node(
-    node: LifecycleNode, context: LaunchContext, dump: LaunchDump
+    node: LifecycleNode, context: LaunchContext
 ) -> Optional[List[LaunchDescriptionEntity]]:
     """
     Execute the action.
@@ -24,6 +23,5 @@ def visit_lifecycle_node(
 
     # Record the lifecycle node name
     node_name = node._Node__expanded_node_name
-    dump.lifecycle_node.append(node_name)
 
-    return visit_node(node, context, dump)
+    return visit_node(node, context)

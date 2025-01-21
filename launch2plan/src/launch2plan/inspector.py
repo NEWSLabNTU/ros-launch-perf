@@ -34,7 +34,6 @@ from launch.utilities import is_a_subclass
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
-from .launch_dump import LaunchDump
 from .visitor import visit_entity
 
 
@@ -96,13 +95,6 @@ class LaunchInspector:
         self.__return_code = 0
 
         # Used to collect executed nodes in this launch
-        self.__launch_dump: LaunchDump = LaunchDump(
-            load_node=list(),
-            file_data=dict(),
-            node=list(),
-            container=list(),
-            lifecycle_node=list(),
-        )
 
     def emit_event(self, event: Event) -> None:
         """
@@ -269,7 +261,7 @@ class LaunchInspector:
                             )
                         )
 
-                    pairs = visit_entity(entity, self.__context, self.__launch_dump)
+                    pairs = visit_entity(entity, self.__context)
 
                     for entity, future in pairs:
                         self._entity_future_pairs.append((entity, future))
@@ -501,20 +493,8 @@ class LaunchInspector:
                 )
 
     def dump(self):
-        # composable_node_containers = list(
-        #     action.cmd for action in self.__composable_node_containers
-        # )
-        # lifecycle_nodes = list(action.cmd for action in self.__lifecycle_nodes)
-        # nodes = list(action.cmd for action in self.__nodes)
-        # actions = list(action.cmd for action in self.__actions)
-        # output = {
-        #     "composable_node_containers": composable_node_containers,
-        #     "lifecycle_nodes": lifecycle_nodes,
-        #     "nodes": nodes,
-        #     "actions": actions,
-        # }
-        dump = dataclasses.asdict(self.__launch_dump)
-        return dump
+        # TODO
+        pass
 
     @property
     def context(self):

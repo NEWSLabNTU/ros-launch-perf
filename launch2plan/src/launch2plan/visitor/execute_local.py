@@ -60,11 +60,9 @@ from launch.utilities import perform_substitutions
 from launch.utilities.type_utils import normalize_typed_substitution
 from launch.utilities.type_utils import perform_typed_substitution
 
-from ..launch_dump import LaunchDump
-
 
 def visit_execute_local(
-    process: ExecuteLocal, context: LaunchContext, dump: LaunchDump
+    process: ExecuteLocal, context: LaunchContext
 ) -> Optional[List[LaunchDescriptionEntity]]:
     """
     Execute the action.

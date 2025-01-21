@@ -22,11 +22,10 @@ from launch.some_substitutions_type import SomeSubstitutionsType_types_tuple
 import composition_interfaces.srv
 
 from ..utils import param_to_kv, text_to_kv, log_level_code_to_text
-from ..launch_dump import LaunchDump, LoadNodeRecord
 
 
 def visit_load_composable_nodes(
-    load: LoadComposableNodes, context: LaunchContext, dump: LaunchDump
+    load: LoadComposableNodes, context: LaunchContext
 ) -> Optional[List[Action]]:
     # resolve target container node name
     target_container = load._LoadComposableNodes__target_container
@@ -63,19 +62,6 @@ def visit_load_composable_nodes(
     for node_description in load._LoadComposableNodes__composable_node_descriptions:
         request = get_composable_node_load_request(node_description, context)
         load_node_requests.append(request)
-
-        record = LoadNodeRecord(
-            package=request.package_name,
-            plugin=request.plugin_name,
-            target_container_name=load._LoadComposableNodes__final_target_container_name,
-            node_name=request.node_name,
-            namespace=request.node_namespace,
-            log_level=log_level_code_to_text(request.log_level),
-            remaps=list(text_to_kv(expr) for expr in request.remap_rules),
-            params=list(param_to_kv(param) for param in request.parameters),
-            extra_args=dict(param_to_kv(param) for param in request.extra_arguments),
-        )
-        dump.load_node.append(record)
 
     # context.add_completion_future(
     #     context.asyncio_loop.run_in_executor(

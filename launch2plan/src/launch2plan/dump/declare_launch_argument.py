@@ -1,30 +1,28 @@
-from typing import Text
+from typing import Text, List
 from dataclasses import dataclass
 
 from launch.actions.declare_launch_argument import DeclareLaunchArgument
-from .substitution import record_substitution
-
-from .substitution import SubstitutionExpr
+from .substitution import serialize_substitution, SubstitutionExpr
 
 
 @dataclass
-class DeclareLaunchArgumentSpec:
+class DeclareLaunchArgumentDump:
     name: Text
     default_value: SubstitutionExpr
     description: Text
     choices: List[Text]
 
 
-def record_declare_launch_argument(
+def serialize_declare_launch_argument(
     entity: DeclareLaunchArgument,
-) -> DeclareLaunchArgumentSpec:
+) -> DeclareLaunchArgumentDump:
     name = entity.name
 
     default_value = None
     if entity.default_value is not None:
-        default_value = record_substitution(entity.default_value)
+        default_value = serialize_substitution(entity.default_value)
 
     description = entity.description
     choices = entity.choices
 
-    return DeclareLaunchArgumentSpec(name, default_value, description, choices)
+    return DeclareLaunchArgumentDump(name, default_value, description, choices)

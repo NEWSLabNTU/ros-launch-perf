@@ -18,7 +18,6 @@ from launch_ros.actions.node import Node
 from launch.events import ExecutionComplete  # noqa
 
 
-from ..launch_dump import LaunchDump
 from .load_composable_nodes import visit_load_composable_nodes
 from .lifecycle_node import visit_lifecycle_node
 from .node import visit_node
@@ -27,13 +26,13 @@ from .include_launch_description import visit_include_launch_description
 
 
 def visit_action(
-    action: Action, context: LaunchContext, dump: LaunchDump
+    action: Action, context: LaunchContext
 ) -> Optional[List[LaunchDescriptionEntity]]:
     condition = action.condition
 
     if condition is None or condition.evaluate(context):
         try:
-            return visit_action_by_class(action, context, dump)
+            return visit_action_by_class(action, context)
         finally:
 
             event = ExecutionComplete(action=action)
@@ -47,22 +46,22 @@ def visit_action(
 
 
 def visit_action_by_class(
-    action: Action, context: LaunchContext, dump: LaunchDump
+    action: Action, context: LaunchContext
 ) -> Optional[List[LaunchDescriptionEntity]]:
     if is_a(action, LoadComposableNodes):
-        return visit_load_composable_nodes(action, context, dump)
+        return visit_load_composable_nodes(action, context)
 
     elif is_a(action, ComposableNodeContainer):
-        return visit_composable_node_container(action, context, dump)
+        return visit_composable_node_container(action, context)
 
     elif is_a(action, LifecycleNode):
-        return visit_lifecycle_node(action, context, dump)
+        return visit_lifecycle_node(action, context)
 
     elif is_a(action, Node):
-        return visit_node(action, context, dump)
+        return visit_node(action, context)
 
     elif is_a(action, IncludeLaunchDescription):
-        return visit_include_launch_description(action, context, dump)
+        return visit_include_launch_description(action, context)
 
     else:
         return action.execute(context)
