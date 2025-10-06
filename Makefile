@@ -47,3 +47,35 @@ plot:  ## Generate profiling plots
 	    echo procpath plot -d profiling.sqlite -q cpu -q rss -p $p -f plot/$p.svg; \
 	done | \
 	parallel -j0 --tty
+
+.PHONY: format
+format:  ## Format both Rust and Python code
+	cd play_launch && cargo +nightly fmt
+	cd dump_launch && uv run ruff format
+
+.PHONY: test
+test: test-python test-rust  ## Run all tests
+
+.PHONY: test-python
+test-python:  ## Run Python tests
+	cd dump_launch && uv run pytest -v
+
+.PHONY: test-rust
+test-rust:  ## Run Rust tests
+	cd play_launch && cargo test
+
+.PHONY: test-coverage
+test-coverage:  ## Generate test coverage reports
+	@echo "==> Python coverage:"
+	@cd dump_launch && uv run pytest --cov --cov-report=term-missing
+	@echo ""
+	@echo "==> Rust coverage:"
+	@cd play_launch && cargo test
+
+.PHONY: test-unit
+test-unit:  ## Run unit tests only
+	@echo "==> Python unit tests:"
+	@cd dump_launch && uv run pytest -v -m unit
+	@echo ""
+	@echo "==> Rust unit tests:"
+	@cd play_launch && cargo test --lib
