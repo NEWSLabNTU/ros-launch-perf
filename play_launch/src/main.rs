@@ -206,7 +206,7 @@ pub fn create_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
             bail!("the file name of {} is not Unicode", log_dir.display());
         };
 
-        for nth in 1.. {
+        for nth in 1..=1000 {
             let new_file_name = format!("{file_name}.{nth}");
             let new_log_dir = log_dir.with_file_name(new_file_name);
 
@@ -220,6 +220,11 @@ pub fn create_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
                 })?;
                 break;
             }
+        }
+
+        // Check if we exhausted all attempts
+        if log_dir.exists() {
+            bail!("unable to find available backup directory name after 1000 attempts");
         }
     }
 
