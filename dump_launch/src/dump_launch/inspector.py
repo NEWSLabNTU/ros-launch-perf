@@ -440,12 +440,18 @@ class LaunchInspector:
         file_data = self.__launch_dump.file_data
 
         for path in parse_cmdline.params_files:
-            with open(path, "r") as fp:
-                file_data[path] = fp.read()
+            try:
+                with open(path, "r") as fp:
+                    file_data[path] = fp.read()
+            except (FileNotFoundError, IOError) as e:
+                self.__logger.warning(f"Unable to read params file {path}: {e}")
 
         if parse_cmdline.log_config_file is not None:
-            with open(parse_cmdline.log_config_file, "r") as fp:
-                file_data[parse_cmdline.log_config_file] = fp.read()
+            try:
+                with open(parse_cmdline.log_config_file, "r") as fp:
+                    file_data[parse_cmdline.log_config_file] = fp.read()
+            except (FileNotFoundError, IOError) as e:
+                self.__logger.warning(f"Unable to read log config file {parse_cmdline.log_config_file}: {e}")
 
     def __on_shutdown(
         self, event: Event, context: LaunchContext

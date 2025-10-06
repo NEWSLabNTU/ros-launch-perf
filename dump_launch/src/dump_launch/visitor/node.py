@@ -1,6 +1,7 @@
 from typing import List
 from typing import Optional
 from typing import Dict
+from typing import Union
 
 
 import launch
@@ -88,10 +89,15 @@ def visit_node(
         for entry, is_file in node_params:
             if is_file:
                 path = entry
-                with open(path, "r") as fp:
-                    data = fp.read()
-                    params_files.append(data)
-                    dump.file_data[path] = data
+                try:
+                    with open(path, "r") as fp:
+                        data = fp.read()
+                        params_files.append(data)
+                        dump.file_data[path] = data
+                except (FileNotFoundError, IOError) as e:
+                    execute_process_logger = launch.logging.get_logger(node.name)
+                    execute_process_logger.error(f"Unable to read parameter file {path}: {e}")
+                    # Continue without this params file
             else:
                 assert is_a(entry, Parameter)
                 name, value = param_to_kv(entry)
