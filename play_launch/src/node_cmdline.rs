@@ -369,3 +369,126 @@ impl NodeCommandLine {
         .collect()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::{HashMap, HashSet},
+        path::PathBuf,
+    };
+
+    #[test]
+    fn test_parse_basic_cmdline() {
+        let cmdline = vec!["ros2", "run", "pkg", "node"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.command, vec!["ros2"]);
+        assert_eq!(result.user_args, vec!["run", "pkg", "node"]);
+    }
+
+    #[test]
+    fn test_parse_with_remaps() {
+        let cmdline = vec!["cmd", "arg", "--ros-args", "-r", "src:=tgt", "--"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.remaps.get("src"), Some(&"tgt".to_string()));
+        assert_eq!(result.user_args, vec!["arg"]);
+    }
+
+    #[test]
+    fn test_parse_with_params() {
+        let cmdline = vec!["cmd", "--ros-args", "-p", "param:=value", "--"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.params.get("param"), Some(&"value".to_string()));
+    }
+
+    #[test]
+    fn test_parse_enable_stdout_logs() {
+        // Test the bug fix!
+        let cmdline = vec!["cmd", "--ros-args", "--enable-stdout-logs", "--"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.stdout_logs, Some(true));
+    }
+
+    #[test]
+    fn test_parse_disable_stdout_logs() {
+        let cmdline = vec!["cmd", "--ros-args", "--disable-stdout-logs", "--"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.stdout_logs, Some(false));
+    }
+
+    #[test]
+    fn test_parse_log_level() {
+        let cmdline = vec!["cmd", "--ros-args", "--log-level", "debug", "--"];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert_eq!(result.log_level, Some("debug".to_string()));
+    }
+
+    #[test]
+    fn test_generate_cmdline_with_remaps() {
+        let cmdline = NodeCommandLine {
+            command: vec!["cmd".to_string()],
+            user_args: vec![],
+            remaps: HashMap::from([("a".to_string(), "b".to_string())]),
+            params: HashMap::new(),
+            params_files: HashSet::new(),
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+        };
+        let result = cmdline.to_cmdline(false);
+        assert!(result.contains(&"--ros-args".to_string()));
+        assert!(result.contains(&"-r".to_string()));
+        assert!(result.contains(&"a:=b".to_string()));
+    }
+
+    #[test]
+    fn test_roundtrip_parse_generate() {
+        let original = vec!["cmd", "--ros-args", "-p", "x:=1", "--"];
+        let parsed = NodeCommandLine::from_cmdline(original.clone()).unwrap();
+        let generated = parsed.to_cmdline(false);
+        let reparsed = NodeCommandLine::from_cmdline(generated).unwrap();
+        assert_eq!(parsed.params, reparsed.params);
+    }
+
+    #[test]
+    #[should_panic(expected = "command line must not be empty")]
+    fn test_command_line_must_not_be_empty() {
+        let cmdline = NodeCommandLine {
+            command: vec![],
+            user_args: vec![],
+            remaps: HashMap::new(),
+            params: HashMap::new(),
+            params_files: HashSet::new(),
+            log_level: None,
+            log_config_file: None,
+            rosout_logs: None,
+            stdout_logs: None,
+            enclave: None,
+        };
+        let _ = cmdline.to_command(false);
+    }
+
+    #[test]
+    fn test_parse_multiple_ros_args() {
+        let cmdline = vec![
+            "cmd",
+            "user1",
+            "--ros-args",
+            "-p",
+            "p1:=v1",
+            "--",
+            "user2",
+            "--ros-args",
+            "-r",
+            "a:=b",
+            "--",
+        ];
+        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
+        assert!(result.user_args.contains(&"user1".to_string()));
+        assert!(result.user_args.contains(&"user2".to_string()));
+        assert_eq!(result.params.get("p1"), Some(&"v1".to_string()));
+        assert_eq!(result.remaps.get("a"), Some(&"b".to_string()));
+    }
+}
