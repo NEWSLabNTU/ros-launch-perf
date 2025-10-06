@@ -386,11 +386,11 @@ async fn run_load_composable_nodes(
             run_load_composable_node(&context, wait_timeout, max_attempts).await
         })
         .buffer_unordered(max_concurrent_spawn)
-        .zip(futures::stream::iter(1..));
+        .zip(futures::stream::iter(0..));
 
     while let Some(((), nth)) = futures.next().await {
-        if nth % 10 == 0 {
-            info!("Done loading {nth} out of {total_count} composable nodes.");
+        if (nth + 1) % 10 == 0 {
+            info!("Done loading {} out of {total_count} composable nodes.", nth + 1);
         }
     }
 }
@@ -472,7 +472,7 @@ async fn run_load_composable_node_once(
     save_composable_node_status(&status, output_dir, log_name)?;
 
     if !status.success() {
-        warn!("{log_name} falis to start");
+        warn!("{log_name} fails to start");
         return Ok(false);
     }
 
