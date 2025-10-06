@@ -107,6 +107,46 @@ Afterwards, you can generate SVG timecharts using this command.
 make plot
 ```
 
+## Development
+
+### Linting
+
+Lint both Python and Rust code:
+
+```sh
+make lint
+```
+
+### Formatting
+
+Format both Python and Rust code:
+
+```sh
+make format
+```
+
+### Testing
+
+Run the full test suite (both Python and Rust):
+
+```sh
+make test
+```
+
+Run only unit tests:
+
+```sh
+make test-unit
+```
+
+Run only integration tests:
+
+```sh
+make test-integration
+```
+
+**Note:** Integration tests for `dump_launch` require ROS 2 to be installed and may skip if there's a Python version mismatch between the development environment and ROS 2.
+
 ## License
 
 This software is distributed under MIT license. You can read the

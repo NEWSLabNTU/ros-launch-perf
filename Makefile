@@ -53,6 +53,11 @@ format:  ## Format both Rust and Python code
 	cd play_launch && cargo +nightly fmt
 	cd dump_launch && uv run ruff format
 
+.PHONY: lint
+lint:  ## Lint both Rust and Python code
+	cd play_launch && cargo clippy -- -D warnings
+	cd dump_launch && uv run ruff check
+
 .PHONY: test
 test: test-python test-rust  ## Run all tests
 
