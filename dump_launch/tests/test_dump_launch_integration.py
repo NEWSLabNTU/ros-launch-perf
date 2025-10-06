@@ -1,5 +1,4 @@
 import json
-import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -34,9 +33,15 @@ class TestDumpLaunchIntegration:
 
             # Check if the command succeeded
             if result.returncode != 0:
-                pytest.skip(
-                    f"demo_nodes_cpp package not available or launch failed: {result.stderr}"
-                )
+                # Check for common skip reasons
+                if "ModuleNotFoundError" in result.stderr and "rclpy" in result.stderr:
+                    pytest.skip(
+                        "ROS 2 Python version mismatch - test requires matching Python version"
+                    )
+                elif "Package" in result.stderr and "not found" in result.stderr:
+                    pytest.skip("demo_nodes_cpp package not available")
+                else:
+                    pytest.skip(f"Launch failed with return code {result.returncode}")
 
             # Verify the output file was created
             assert output_file.exists(), "record.json was not created"
@@ -78,6 +83,8 @@ class TestDumpLaunchIntegration:
             ]
 
             success = False
+            skip_reason = None
+
             for package, launch_file in packages_to_try:
                 result = subprocess.run(
                     [
@@ -96,8 +103,22 @@ class TestDumpLaunchIntegration:
                     success = True
                     break
 
+                # Capture skip reason from first failure
+                if not skip_reason:
+                    if (
+                        "ModuleNotFoundError" in result.stderr
+                        and "rclpy" in result.stderr
+                    ):
+                        skip_reason = "ROS 2 Python version mismatch"
+                    elif "Package" in result.stderr and "not found" in result.stderr:
+                        skip_reason = "ROS 2 demo packages not available"
+
             if not success:
-                pytest.skip("No suitable ROS 2 demo packages available for testing")
+                reason = (
+                    skip_reason
+                    or "No suitable ROS 2 demo packages available for testing"
+                )
+                pytest.skip(reason)
 
             # Verify JSON is valid and has expected structure
             with open(output_file) as f:
