@@ -197,7 +197,7 @@ fn build_container_groups(
     for context in nice_load_node_contexts {
         container_groups
             .get_mut(&context.record.target_container_name)
-            .unwrap()
+            .expect("unable to find the container for the composable node")
             .composable_node_contexts
             .push(context);
     }

@@ -273,7 +273,11 @@ impl NodeCommandLine {
                     .map(Cow::from);
                 let log_config_file_args = log_config_file
                     .as_ref()
-                    .map(|path| ["--log-config-file", path.to_str().unwrap()])
+                    .map(|path| {
+                        let path_str = path.to_str()
+                            .expect("log config file path contains invalid UTF-8");
+                        ["--log-config-file", path_str]
+                    })
                     .into_iter()
                     .flatten()
                     .map(Cow::from);
@@ -309,7 +313,11 @@ impl NodeCommandLine {
                 });
                 let params_file_args = params_files
                     .iter()
-                    .flat_map(|path| ["--params-file", path.to_str().unwrap()])
+                    .flat_map(|path| {
+                        let path_str = path.to_str()
+                            .expect("params file path contains invalid UTF-8");
+                        ["--params-file", path_str]
+                    })
                     .map(Cow::from);
 
                 chain!(
@@ -342,7 +350,8 @@ impl NodeCommandLine {
     /// Create a command object.
     pub fn to_command(&self, long_args: bool) -> Command {
         let cmdline = self.to_cmdline(long_args);
-        let (program, args) = cmdline.split_first().unwrap();
+        let (program, args) = cmdline.split_first()
+            .expect("command line must not be empty");
         let mut command = Command::new(program);
         command.args(args);
         command
