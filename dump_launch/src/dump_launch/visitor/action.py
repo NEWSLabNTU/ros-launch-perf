@@ -1,12 +1,9 @@
-from typing import Iterable
 from typing import List
 from typing import Optional
-from typing import Text
-from typing import Tuple
 
 from launch.action import Action
 from launch.actions.include_launch_description import IncludeLaunchDescription
-from launch.utilities import is_a, is_a_subclass
+from launch.utilities import is_a
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch_ros.actions.load_composable_nodes import (

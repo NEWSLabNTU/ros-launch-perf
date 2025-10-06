@@ -1,1 +1,1 @@
-from .entity import visit_entity
+from .entity import visit_entity as visit_entity

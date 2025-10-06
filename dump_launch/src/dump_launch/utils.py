@@ -1,5 +1,5 @@
 import decimal
-from typing import Text, Optional, Tuple, Optional
+from typing import Text, Tuple, Optional
 
 from rcl_interfaces.msg import Parameter
 from ruamel.yaml import YAML

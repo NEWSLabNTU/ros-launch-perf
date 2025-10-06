@@ -1,9 +1,8 @@
 import threading
 from typing import List
 from typing import Optional
-from typing import Text
-from typing import Text, Optional
 
+import launch.logging
 from launch.utilities import is_a_subclass
 from launch.action import Action
 from launch.launch_context import LaunchContext

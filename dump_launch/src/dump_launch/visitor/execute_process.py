@@ -1,8 +1,5 @@
-from typing import Iterable
 from typing import List
 from typing import Optional
-from typing import Text
-from typing import Tuple
 
 from launch.actions import ExecuteProcess
 from launch.launch_context import LaunchContext

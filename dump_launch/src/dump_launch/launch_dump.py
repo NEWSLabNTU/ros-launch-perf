@@ -1,4 +1,4 @@
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional
 from typing import Text  # noqa: F401
 from typing import Tuple  # noqa: F401
 from dataclasses import dataclass

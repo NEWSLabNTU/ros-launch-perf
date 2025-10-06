@@ -1,6 +1,5 @@
 from typing import List
 
-from launch import LaunchDescription
 from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.actions.set_launch_configuration import SetLaunchConfiguration
 from launch.launch_context import LaunchContext

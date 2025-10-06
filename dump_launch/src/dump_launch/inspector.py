@@ -8,7 +8,6 @@ import logging
 import platform
 import signal
 import threading
-import traceback
 from typing import Coroutine
 from typing import Iterable
 from typing import List  # noqa: F401
