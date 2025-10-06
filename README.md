@@ -22,9 +22,9 @@ follow the instructions.
 
   Visit [rustup.rs](https://rustup.rs/) and install `rustup`.
 
-- rye
+- uv
 
-  Visit [rye.astral.sh](https://rye.astral.sh/) to install it. It is
+  Visit [docs.astral.sh/uv](https://docs.astral.sh/uv/) to install it. It is
   used to setup a Python virtual environment and to manage Python
   project.
 

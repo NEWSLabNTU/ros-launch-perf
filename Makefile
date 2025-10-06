@@ -2,16 +2,16 @@
 SHELL := bash
 
 build:
-	rye sync
-	rye build --all
+	cd dump_launch && uv sync
+	cd dump_launch && uv build
 	cargo build --release --all-targets
 
 clean:
-	rm -rf dist
+	rm -rf dump_launch/dist
 	cargo clean
 
 install: build
-	pip install -U dist/dump_launch-0.1.0-py3-none-any.whl
+	uv pip install -U dump_launch/dist/dump_launch-0.1.0-py3-none-any.whl
 	cargo install --path play_launch
 
 debian:
