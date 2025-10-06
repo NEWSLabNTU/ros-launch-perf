@@ -205,7 +205,7 @@ impl NodeCommandLine {
                     rosout_logs = Some(false);
                 }
                 "--enable-stdout-logs" => {
-                    stdout_logs = Some(false);
+                    stdout_logs = Some(true);
                 }
                 "--disable-stdout-logs" => {
                     stdout_logs = Some(false);
