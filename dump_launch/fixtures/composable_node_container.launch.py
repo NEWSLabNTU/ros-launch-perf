@@ -35,10 +35,16 @@ def launch_setup(context, *args, **kwargs):
             params,
         ],
         remappings=[
-            ("~/input/mrm/emergency_stop/operate", "/system/mrm/emergency_stop/operate"),
+            (
+                "~/input/mrm/emergency_stop/operate",
+                "/system/mrm/emergency_stop/operate",
+            ),
             ("~/input/control/control_cmd", "/control/command/control_cmd"),
             ("~/output/mrm/emergency_stop/status", "/system/mrm/emergency_stop/status"),
-            ("~/output/mrm/emergency_stop/control_cmd", "/system/emergency/control_cmd"),
+            (
+                "~/output/mrm/emergency_stop/control_cmd",
+                "/system/emergency/control_cmd",
+            ),
         ],
     )
 
@@ -68,4 +74,6 @@ def generate_launch_description():
         )
     ]
 
-    return launch.LaunchDescription(launch_arguments + [OpaqueFunction(function=launch_setup)])
+    return launch.LaunchDescription(
+        launch_arguments + [OpaqueFunction(function=launch_setup)]
+    )

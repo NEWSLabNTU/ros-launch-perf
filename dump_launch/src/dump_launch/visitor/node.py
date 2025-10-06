@@ -96,7 +96,9 @@ def visit_node(
                         dump.file_data[path] = data
                 except (FileNotFoundError, IOError) as e:
                     execute_process_logger = launch.logging.get_logger(node.name)
-                    execute_process_logger.error(f"Unable to read parameter file {path}: {e}")
+                    execute_process_logger.error(
+                        f"Unable to read parameter file {path}: {e}"
+                    )
                     # Continue without this params file
             else:
                 assert is_a(entry, Parameter)

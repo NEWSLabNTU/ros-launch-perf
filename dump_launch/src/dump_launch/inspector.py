@@ -78,9 +78,7 @@ class LaunchInspector:
         )
 
         # Setup storage for state.
-        self._entity_future_pairs = (
-            []
-        )  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
+        self._entity_future_pairs = []  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
 
         # Used to allow asynchronous use of self.__loop_from_run_thread without
         # it being set to None by run() as it exits.
@@ -451,7 +449,9 @@ class LaunchInspector:
                 with open(parse_cmdline.log_config_file, "r") as fp:
                     file_data[parse_cmdline.log_config_file] = fp.read()
             except (FileNotFoundError, IOError) as e:
-                self.__logger.warning(f"Unable to read log config file {parse_cmdline.log_config_file}: {e}")
+                self.__logger.warning(
+                    f"Unable to read log config file {parse_cmdline.log_config_file}: {e}"
+                )
 
     def __on_shutdown(
         self, event: Event, context: LaunchContext

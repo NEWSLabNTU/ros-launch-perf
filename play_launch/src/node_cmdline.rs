@@ -274,7 +274,8 @@ impl NodeCommandLine {
                 let log_config_file_args = log_config_file
                     .as_ref()
                     .map(|path| {
-                        let path_str = path.to_str()
+                        let path_str = path
+                            .to_str()
                             .expect("log config file path contains invalid UTF-8");
                         ["--log-config-file", path_str]
                     })
@@ -314,7 +315,8 @@ impl NodeCommandLine {
                 let params_file_args = params_files
                     .iter()
                     .flat_map(|path| {
-                        let path_str = path.to_str()
+                        let path_str = path
+                            .to_str()
                             .expect("params file path contains invalid UTF-8");
                         ["--params-file", path_str]
                     })
@@ -350,7 +352,8 @@ impl NodeCommandLine {
     /// Create a command object.
     pub fn to_command(&self, long_args: bool) -> Command {
         let cmdline = self.to_cmdline(long_args);
-        let (program, args) = cmdline.split_first()
+        let (program, args) = cmdline
+            .split_first()
             .expect("command line must not be empty");
         let mut command = Command::new(program);
         command.args(args);

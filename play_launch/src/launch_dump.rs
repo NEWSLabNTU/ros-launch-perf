@@ -195,7 +195,8 @@ impl ComposableNodeRecord {
 
     pub fn to_command(&self, standalone: bool) -> Command {
         let cmdline = self.to_cmdline(standalone);
-        let (program, args) = cmdline.split_first()
+        let (program, args) = cmdline
+            .split_first()
             .expect("command line must not be empty");
         let mut command = Command::new(program);
         command.args(args);
@@ -268,7 +269,8 @@ pub fn load_and_transform_node_records<'a>(
 }
 
 fn copy_cached_data(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
-    let file_name = src_path.to_str()
+    let file_name = src_path
+        .to_str()
         .ok_or_else(|| eyre::eyre!("path contains invalid UTF-8: {}", src_path.display()))?
         .replace(MAIN_SEPARATOR, "@");
     let tgt_path = tgt_dir.join(file_name);

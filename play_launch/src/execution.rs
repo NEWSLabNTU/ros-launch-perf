@@ -390,7 +390,10 @@ async fn run_load_composable_nodes(
 
     while let Some(((), nth)) = futures.next().await {
         if (nth + 1) % 10 == 0 {
-            info!("Done loading {} out of {total_count} composable nodes.", nth + 1);
+            info!(
+                "Done loading {} out of {total_count} composable nodes.",
+                nth + 1
+            );
         }
     }
 }

@@ -35,7 +35,6 @@ def visit_action(
         try:
             return visit_action_by_class(action, context, dump)
         finally:
-
             event = ExecutionComplete(action=action)
             if context.would_handle_event(event):
                 future = action.get_asyncio_future()

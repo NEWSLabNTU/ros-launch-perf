@@ -83,6 +83,9 @@ def parse_ros_cmdline(cmdline: List[str]):
         elif arg == "--enable-stdout-logs":
             enable_stdout_logs = True
 
+        elif arg == "--disable-stdout-logs":
+            enable_stdout_logs = False
+
         elif arg in ["-e", "--enclave"]:
             value = next(ros_args_iter, None)
             assert value is not None
