@@ -376,10 +376,7 @@ impl NodeCommandLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::{HashMap, HashSet},
-        path::PathBuf,
-    };
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn test_parse_basic_cmdline() {
