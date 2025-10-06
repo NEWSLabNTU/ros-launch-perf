@@ -78,4 +78,9 @@ test-unit:  ## Run unit tests only
 	@cd dump_launch && uv run pytest -v -m unit
 	@echo ""
 	@echo "==> Rust unit tests:"
-	@cd play_launch && cargo test --lib
+	@cd play_launch && cargo test
+
+.PHONY: test-integration
+test-integration:  ## Run integration tests only
+	@echo "==> Python integration tests:"
+	@cd dump_launch && uv run pytest -v -m integration
