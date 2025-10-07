@@ -19,7 +19,7 @@ clean:  ## Clean build artifacts
 
 .PHONY: install
 install: build  ## Install both packages
-	uv pip install -U dump_launch/dist/dump_launch-0.1.0-py3-none-any.whl
+	pip install --force-reinstall dump_launch/dist/dump_launch-0.1.0-py3-none-any.whl
 	cargo install --path play_launch
 
 .PHONY: debian
