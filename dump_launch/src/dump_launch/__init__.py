@@ -48,15 +48,6 @@ def main() -> int:
     launch_arguments.extend(args.launch_arguments)
 
     output_file = args.output
-    if os.path.exists(output_file):
-        nth = 1
-        while True:
-            new_path = f"{output_file}.{nth}"
-            if not os.path.exists(new_path):
-                os.rename(output_file, new_path)
-                break
-            else:
-                nth += 1
 
     inspector = LaunchInspector(
         argv=launch_arguments, noninteractive=True, debug=args.debug
