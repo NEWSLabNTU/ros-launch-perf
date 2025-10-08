@@ -1,3 +1,4 @@
+mod container_readiness;
 mod context;
 mod execution;
 mod launch_dump;
@@ -10,7 +11,8 @@ use crate::{
         NodeContextClasses,
     },
     execution::{
-        spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeTasks, SpawnComposableNodeConfig,
+        spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeExecutionConfig,
+        ComposableNodeTasks, SpawnComposableNodeConfig,
     },
     launch_dump::{load_and_transform_node_records, load_launch_dump, NodeContainerRecord},
     options::Options,
@@ -105,7 +107,12 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         .par_iter()
         .map(|record| {
             let NodeContainerRecord { namespace, name } = record;
-            format!("{namespace}/{name}")
+            // Handle namespace ending with '/' to avoid double slashes
+            if namespace.ends_with('/') {
+                format!("{namespace}{name}")
+            } else {
+                format!("{namespace}/{name}")
+            }
         })
         .collect();
 
@@ -127,20 +134,33 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         .into_iter()
         .map(|future| future.boxed());
 
+    // Create composable node execution configuration
+    let composable_node_config = ComposableNodeExecutionConfig {
+        standalone_composable_nodes: opts.standalone_composable_nodes,
+        load_orphan_composable_nodes: opts.load_orphan_composable_nodes,
+        spawn_config: SpawnComposableNodeConfig {
+            max_concurrent_spawn: opts.max_concurrent_load_node_spawn,
+            max_attempts: opts.load_node_attempts,
+            wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
+        },
+        load_node_delay: Duration::from_millis(opts.delay_load_node_millis),
+        container_wait_config: if opts.skip_container_check {
+            None
+        } else {
+            Some(crate::container_readiness::ContainerWaitConfig::new(
+                opts.container_ready_timeout_secs,
+                opts.container_poll_interval_ms,
+            ))
+        },
+    };
+
     // Create the task set to load composable nodes according to user
     // options.
     let composable_node_tasks = spawn_or_load_composable_nodes(
         container_contexts,
         load_node_contexts,
         &container_names,
-        opts.standalone_composable_nodes,
-        opts.load_orphan_composable_nodes,
-        SpawnComposableNodeConfig {
-            max_concurrent_spawn: opts.max_concurrent_load_node_spawn,
-            max_attempts: opts.load_node_attempts,
-            wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
-        },
-        Duration::from_millis(opts.delay_load_node_millis),
+        composable_node_config,
     );
 
     // Unpack the task set to a Vec of tasks.

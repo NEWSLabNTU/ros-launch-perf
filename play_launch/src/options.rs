@@ -29,4 +29,16 @@ pub struct Options {
 
     #[clap(long)]
     pub print_shell: bool,
+
+    /// Maximum time to wait for each container to be ready (seconds)
+    #[clap(long, default_value = "30")]
+    pub container_ready_timeout_secs: u64,
+
+    /// Interval for polling container readiness (milliseconds)
+    #[clap(long, default_value = "100")]
+    pub container_poll_interval_ms: u64,
+
+    /// Skip container readiness check and use fixed delay instead
+    #[clap(long)]
+    pub skip_container_check: bool,
 }

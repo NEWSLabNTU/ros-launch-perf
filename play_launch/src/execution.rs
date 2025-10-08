@@ -24,6 +24,16 @@ pub struct SpawnComposableNodeConfig {
     pub wait_timeout: Duration,
 }
 
+/// Configuration for executing composable nodes.
+#[derive(Debug, Clone)]
+pub struct ComposableNodeExecutionConfig {
+    pub standalone_composable_nodes: bool,
+    pub load_orphan_composable_nodes: bool,
+    pub spawn_config: SpawnComposableNodeConfig,
+    pub load_node_delay: Duration,
+    pub container_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
+}
+
 /// The set of node containers and composable nodes belong to the same
 /// container name.
 struct NodeContainerGroup {
@@ -87,12 +97,9 @@ pub fn spawn_or_load_composable_nodes(
     container_contexts: Vec<NodeContainerContext>,
     load_node_contexts: Vec<ComposableNodeContext>,
     container_names: &HashSet<String>,
-    standalone_composable_nodes: bool,
-    load_orphan_composable_nodes: bool,
-    spawn_composable_node_config: SpawnComposableNodeConfig,
-    load_node_delay: Duration,
+    config: ComposableNodeExecutionConfig,
 ) -> ComposableNodeTasks {
-    if standalone_composable_nodes {
+    if config.standalone_composable_nodes {
         info!("standalone composable node: {}", load_node_contexts.len());
 
         let standalone_composable_node_tasks =
@@ -130,8 +137,9 @@ pub fn spawn_or_load_composable_nodes(
                 container_names,
                 container_contexts,
                 nice_load_node_contexts,
-                spawn_composable_node_config,
-                load_node_delay,
+                config.spawn_config,
+                config.load_node_delay,
+                config.container_wait_config.clone(),
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -142,13 +150,12 @@ pub fn spawn_or_load_composable_nodes(
         // Optionally load orphan composable nodes
         let load_orphan_composable_nodes_task = if orphan_load_node_contexts.is_empty() {
             None
-        } else if load_orphan_composable_nodes {
+        } else if config.load_orphan_composable_nodes {
             info!(
                 "orphan composable node: {}",
                 orphan_load_node_contexts.len()
             );
-            let task =
-                run_load_composable_nodes(orphan_load_node_contexts, spawn_composable_node_config);
+            let task = run_load_composable_nodes(orphan_load_node_contexts, config.spawn_config);
             Some(task.boxed())
         } else {
             warn!(
@@ -299,6 +306,7 @@ fn spawn_node_containers_and_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
     load_node_delay: Duration,
+    container_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -310,15 +318,33 @@ fn spawn_node_containers_and_load_composable_nodes(
     // Spawn node containers in each node container group
     let (container_tasks, nice_load_node_groups) = spawn_node_containers(container_groups);
 
+    let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
+
     let load_composable_nodes_task = async move {
         if nice_load_node_groups.is_empty() {
             return;
         }
 
-        // Wait for a period before loading composable nodes. It
-        // is by intention to make sure node components are ready
-        // for receiving LoadNode requests.
-        tokio::time::sleep(load_node_delay).await;
+        // Wait for containers to be ready
+        if let Some(wait_config) = container_wait_config {
+            // New behavior: wait for service availability
+            info!("Waiting for containers to be ready...");
+            if let Err(e) = crate::container_readiness::wait_for_containers_ready(
+                &container_names_vec,
+                &wait_config,
+            )
+            .await
+            {
+                error!("Error waiting for containers: {}", e);
+            }
+        } else {
+            // Legacy behavior: fixed delay
+            info!(
+                "Using fixed delay of {:?} before loading composable nodes",
+                load_node_delay
+            );
+            tokio::time::sleep(load_node_delay).await;
+        }
 
         // Spawn composable nodes having belonging containers.
         run_load_composable_node_groups(nice_load_node_groups, config).await;

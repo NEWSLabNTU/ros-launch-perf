@@ -216,7 +216,12 @@ pub fn prepare_node_contexts(
                     return Either::Right(context);
                 };
 
-                let container_name = format!("{namespace}/{name}");
+                // Handle namespace ending with '/' to avoid double slashes
+                let container_name = if namespace.ends_with('/') {
+                    format!("{namespace}{name}")
+                } else {
+                    format!("{namespace}/{name}")
+                };
                 if !container_names.contains(&container_name) {
                     return Either::Right(context);
                 };
