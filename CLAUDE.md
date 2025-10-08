@@ -81,7 +81,7 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
 
 ### Execution Flow (play_launch)
 
-1. **Load & Transform** (launch_dump.rs): Deserialize `record.json` and copy cached parameter files to `log/params_files/`
+1. **Load & Transform** (launch_dump.rs): Deserialize `record.json` and copy cached parameter files to `play_log/params_files/`
 
 2. **Context Preparation** (context.rs):
    - `prepare_node_contexts()`: Classify nodes into containers vs regular nodes
@@ -99,7 +99,7 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
    - Retry logic: up to `load_node_attempts` (default: 3) with `load_node_timeout_millis` (default: 30s)
    - Orphans only loaded if `--load-orphan-composable-nodes` is set
 
-5. **Logging**: All node stdout/stderr, PIDs, status codes saved to `log/node/` and `log/load_node/`
+5. **Logging**: All node stdout/stderr, PIDs, status codes saved to `play_log/node/` and `play_log/load_node/`
 
 ### Key Rust Modules
 
@@ -119,7 +119,7 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
 ## Important Configuration Options
 
 play_launch accepts these options (play_launch/src/options.rs):
-- `--log-dir <PATH>`: Log directory (default: `log`)
+- `--log-dir <PATH>`: Log directory (default: `play_log`)
 - `--input-file <PATH>`: Input record file (default: `record.json`)
 - `--delay-load-node-millis <MS>`: Delay before loading composable nodes (default: 100ms)
 - `--load-node-timeout-millis <MS>`: Timeout for composable node loading (default: 30s)
@@ -133,7 +133,7 @@ play_launch accepts these options (play_launch/src/options.rs):
 
 After running `play_launch`, logs are organized as:
 ```
-log/
+play_log/
 ├── params_files/          # Cached parameter files from record.json
 ├── node/                  # Regular node logs
 │   └── <package>/<exec_name>/

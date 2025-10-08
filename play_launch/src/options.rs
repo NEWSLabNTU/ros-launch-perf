@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 pub struct Options {
-    #[clap(long, default_value = "log")]
+    #[clap(long, default_value = "play_log")]
     pub log_dir: PathBuf,
 
     #[clap(long, default_value = "record.json")]

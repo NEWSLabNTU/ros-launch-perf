@@ -16,6 +16,8 @@ wheels/
 *.swp
 *.swo
 
+# play_launch logs
+play_log/
 
 # Added by cargo
 

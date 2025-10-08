@@ -33,16 +33,16 @@ uninstall:  ## Uninstall both packages
 
 .PHONY: profile
 profile:  ## Profile resource usage (requires procpath)
-	procpath record -p $(cat $(find log/node -name pid) | tr '\n' ',') -d profiling.sqlite -i 0.1
+	procpath record -p $(cat $(find play_log/node -name pid) | tr '\n' ',') -d profiling.sqlite -i 0.1
 
 .PHONY: plot
 plot:  ## Generate profiling plots
 	mkdir plot
 
-	procpath plot -d profiling.sqlite -q cpu -p $(cat $(find log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/cpu-all.svg
-	procpath plot -d profiling.sqlite -q rss -p $(cat $(find log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/rss-all.svg
+	procpath plot -d profiling.sqlite -q cpu -p $(cat $(find play_log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/cpu-all.svg
+	procpath plot -d profiling.sqlite -q rss -p $(cat $(find play_log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/rss-all.svg
 
-	cat $(find log/node -name pid | grep -v rviz) | \
+	cat $(find play_log/node -name pid | grep -v rviz) | \
 	while read p; do; \
 	    echo procpath plot -d profiling.sqlite -q cpu -q rss -p $p -f plot/$p.svg; \
 	done | \
