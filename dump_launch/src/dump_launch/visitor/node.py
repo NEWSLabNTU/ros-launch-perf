@@ -111,10 +111,14 @@ def visit_node(
         remaps = node.expanded_remapping_rules
 
     # Store a node record
+    node_name = node._Node__expanded_node_name
+    if "<node_name_unspecified>" in node_name:
+        node_name = None
+
     record = NodeRecord(
         executable=executable,
         package=package,
-        name=node._Node__expanded_node_name,
+        name=node_name,
         namespace=namespace,
         exec_name=node.name,
         cmd=node.cmd,
