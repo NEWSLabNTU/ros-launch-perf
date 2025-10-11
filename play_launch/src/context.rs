@@ -56,6 +56,16 @@ impl ComposableNodeContext {
         let stderr_file = File::create(&stderr_path)?;
 
         let mut command: Command = command.into();
+
+        // Create a new process group to ensure all child processes are killed together
+        #[cfg(unix)]
+        unsafe {
+            command.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+
         command.kill_on_drop(true);
         command.stdin(Stdio::null());
         command.stdout(stdout_file);
@@ -85,6 +95,16 @@ impl ComposableNodeContext {
         let stderr_file = File::create(&stderr_path)?;
 
         let mut command: Command = command.into();
+
+        // Create a new process group to ensure all child processes are killed together
+        #[cfg(unix)]
+        unsafe {
+            command.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+
         command.kill_on_drop(true);
         command.stdin(Stdio::null());
         command.stdout(stdout_file);
@@ -133,6 +153,17 @@ impl NodeContext {
 
         let mut command: tokio::process::Command = cmdline.to_command(false).into();
         // let mut command: tokio::process::Command = record.to_command(false).into();
+
+        // Create a new process group to ensure all child processes are killed together
+        #[cfg(unix)]
+        unsafe {
+            command.pre_exec(|| {
+                // Create a new process group
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+
         command.kill_on_drop(true);
         command.stdin(Stdio::null());
         command.stdout(stdout_file);

@@ -27,10 +27,82 @@ use std::{
     fs,
     io::{self, prelude::*},
     path::{Path, PathBuf},
+    process,
     time::Duration,
 };
 use tokio::runtime::Runtime;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+
+/// Kill all descendant processes of the current process recursively
+#[cfg(unix)]
+fn kill_all_descendants() {
+    let my_pid = process::id();
+    debug!("Killing all descendant processes of PID {}", my_pid);
+
+    // Find all descendant PIDs recursively (including grandchildren)
+    let descendants = find_all_descendants(my_pid);
+
+    if !descendants.is_empty() {
+        debug!(
+            "Found {} descendant processes to terminate: {:?}",
+            descendants.len(),
+            descendants
+        );
+
+        // Kill them in reverse order (children before parents) with SIGTERM
+        for &pid in descendants.iter().rev() {
+            debug!("Sending SIGTERM to PID {}", pid);
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output();
+        }
+
+        // Give processes time to terminate gracefully
+        std::thread::sleep(std::time::Duration::from_millis(200));
+
+        // Force kill any remaining processes with SIGKILL
+        for &pid in descendants.iter().rev() {
+            debug!("Sending SIGKILL to PID {}", pid);
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", &pid.to_string()])
+                .output();
+        }
+    } else {
+        debug!("No descendant processes found to terminate");
+    }
+}
+
+/// Recursively find all descendant PIDs of a given parent PID
+#[cfg(unix)]
+fn find_all_descendants(parent_pid: u32) -> Vec<u32> {
+    let mut result = Vec::new();
+
+    // Use pgrep to find direct children of this parent
+    let output = std::process::Command::new("pgrep")
+        .args(["-P", &parent_pid.to_string()])
+        .output();
+
+    if let Ok(output) = output {
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if let Ok(child_pid) = line.trim().parse::<u32>() {
+                    // Add this child
+                    result.push(child_pid);
+                    // Recursively find this child's descendants (grandchildren, etc.)
+                    result.extend(find_all_descendants(child_pid));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+#[cfg(not(unix))]
+fn kill_all_descendants() {
+    // No-op on non-Unix systems
+}
 
 fn main() -> eyre::Result<()> {
     // install global collector configured based on RUST_LOG env var.
@@ -196,19 +268,36 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
 
     // Poll on all waiting tasks and consume finished tasks
-    // one-by-one.
-    while !wait_futures.is_empty() {
-        let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-
-        if let Err(err) = result {
-            error!("{err}");
+    // one-by-one, while also listening for Ctrl-C signal.
+    let result = tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Received Ctrl-C signal, shutting down gracefully...");
+            // Kill all descendant processes FIRST (before dropping futures)
+            // This ensures we find grandchildren before their parent processes are killed
+            kill_all_descendants();
+            // Drop all futures, which will trigger kill_on_drop for any remaining processes
+            drop(wait_futures);
+            info!("All child processes terminated");
+            Ok(())
         }
+        _ = async {
+            while !wait_futures.is_empty() {
+                let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
 
-        let future_to_discard = wait_futures.remove(ix);
-        drop(future_to_discard);
-    }
+                if let Err(err) = result {
+                    error!("{err}");
+                }
 
-    Ok(())
+                let future_to_discard = wait_futures.remove(ix);
+                drop(future_to_discard);
+            }
+        } => {
+            info!("All tasks completed normally");
+            Ok(())
+        }
+    };
+
+    result
 }
 
 /// Create a directory to store logging data.

@@ -431,6 +431,7 @@ dependencies = [
  "eyre",
  "futures",
  "itertools",
+ "libc",
  "rayon",
  "serde",
  "serde_json",
