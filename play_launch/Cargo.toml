@@ -10,6 +10,7 @@ readme = "README.md"
 license = "BSD"
 
 [dependencies]
+chrono = "0.4"
 clap = { version = "4.5.16", features = ["derive"] }
 eyre = "0.6.12"
 futures = "0.3.30"

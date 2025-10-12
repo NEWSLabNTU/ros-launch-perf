@@ -30,7 +30,7 @@ use std::{
     path::{Path, PathBuf},
     process,
     sync::OnceLock,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::Duration,
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
@@ -333,45 +333,46 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     result
 }
 
+/// Format current timestamp as YYYY-MM-DD_HH-MM-SS
+fn format_timestamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+}
+
 /// Create a directory to store logging data.
 ///
-/// If the directory already exists, move the directory to "log.N"
-/// where N is a number.
+/// Creates a timestamped subdirectory under the base log directory.
+/// Format: base_dir/YYYY-MM-DD_HH-MM-SS/ or base_dir/YYYY-MM-DD_HH-MM-SS-N/ if conflicts occur
 pub fn create_log_dir(log_dir: &Path) -> eyre::Result<PathBuf> {
-    // If the log_dir points to an existing file/dir, find a proper N
-    // and rename it to "{log_dir}.N".
-    if log_dir.exists() {
-        let Some(file_name) = log_dir.file_name() else {
-            bail!("unable to find the file name of {}", log_dir.display());
-        };
-        let Some(file_name) = file_name.to_str() else {
-            bail!("the file name of {} is not Unicode", log_dir.display());
-        };
+    // Create base directory if it doesn't exist
+    if !log_dir.exists() {
+        fs::create_dir_all(log_dir)
+            .wrap_err_with(|| format!("unable to create base directory {}", log_dir.display()))?;
+    }
 
-        for nth in 1..=1000 {
-            let new_file_name = format!("{file_name}.{nth}");
-            let new_log_dir = log_dir.with_file_name(new_file_name);
+    // Create timestamped subdirectory
+    let timestamp = format_timestamp();
+    let mut timestamped_dir = log_dir.join(&timestamp);
 
-            if !new_log_dir.exists() {
-                fs::rename(log_dir, &new_log_dir).wrap_err_with(|| {
-                    format!(
-                        "unable to move from {} to {}",
-                        log_dir.display(),
-                        new_log_dir.display()
-                    )
-                })?;
+    // If directory already exists, add -1, -2, ... suffix
+    if timestamped_dir.exists() {
+        for n in 1..=1000 {
+            timestamped_dir = log_dir.join(format!("{}-{}", timestamp, n));
+            if !timestamped_dir.exists() {
                 break;
             }
         }
 
         // Check if we exhausted all attempts
-        if log_dir.exists() {
-            bail!("unable to find available backup directory name after 1000 attempts");
+        if timestamped_dir.exists() {
+            eyre::bail!(
+                "unable to find available timestamped directory after 1000 attempts for timestamp {}",
+                timestamp
+            );
         }
     }
 
-    fs::create_dir(log_dir)
-        .wrap_err_with(|| format!("unable to create directory {}", log_dir.display()))?;
+    fs::create_dir(&timestamped_dir)
+        .wrap_err_with(|| format!("unable to create directory {}", timestamped_dir.display()))?;
 
-    Ok(log_dir.to_path_buf())
+    Ok(timestamped_dir)
 }

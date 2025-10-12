@@ -324,7 +324,14 @@ mod tests {
     #[tokio::test]
     async fn test_container_wait_config() {
         let config = ContainerWaitConfig::new(10, 200);
-        assert_eq!(config.max_wait, Duration::from_secs(10));
+        assert_eq!(config.max_wait, Some(Duration::from_secs(10)));
+        assert_eq!(config.poll_interval, Duration::from_millis(200));
+    }
+
+    #[tokio::test]
+    async fn test_container_wait_config_unlimited() {
+        let config = ContainerWaitConfig::new(0, 200);
+        assert_eq!(config.max_wait, None);
         assert_eq!(config.poll_interval, Duration::from_millis(200));
     }
 }
