@@ -2,7 +2,7 @@ use crate::{
     launch_dump::{ComposableNodeRecord, LaunchDump, NodeRecord},
     node_cmdline::NodeCommandLine,
 };
-use eyre::{bail, ensure};
+use eyre::bail;
 use rayon::prelude::*;
 use std::{
     collections::HashSet,
@@ -136,7 +136,6 @@ impl NodeContext {
             bail!(r#"expect the "package" field but not found"#);
         };
 
-        ensure!(output_dir.is_relative());
         let stdout_path = output_dir.join("out");
         let stderr_path = output_dir.join("err");
         let cmdline_path = output_dir.join("cmdline");

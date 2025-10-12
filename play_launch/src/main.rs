@@ -6,6 +6,7 @@ mod node_cmdline;
 mod options;
 
 use crate::{
+    container_readiness::ServiceDiscoveryHandle,
     context::{
         prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
         NodeContextClasses,
@@ -18,7 +19,7 @@ use crate::{
     options::Options,
 };
 use clap::Parser;
-use eyre::{bail, Context};
+use eyre::Context;
 use futures::{future::JoinAll, FutureExt};
 use itertools::chain;
 use rayon::prelude::*;
@@ -28,10 +29,14 @@ use std::{
     io::{self, prelude::*},
     path::{Path, PathBuf},
     process,
-    time::Duration,
+    sync::OnceLock,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
+
+/// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
+static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
 
 /// Kill all descendant processes of the current process recursively
 #[cfg(unix)]
@@ -113,6 +118,34 @@ fn main() -> eyre::Result<()> {
     if opts.print_shell {
         generate_shell(&opts)?;
     } else {
+        // Start ROS service discovery thread if service checking is enabled
+        if opts.wait_for_service_ready {
+            info!("Starting ROS service discovery thread for container readiness checking...");
+            if opts.service_ready_timeout_secs == 0 {
+                info!("Container service readiness will wait indefinitely");
+            } else {
+                info!(
+                    "Container service readiness timeout: {}s",
+                    opts.service_ready_timeout_secs
+                );
+            }
+
+            match container_readiness::start_service_discovery_thread() {
+                Ok(handle) => {
+                    SERVICE_DISCOVERY_HANDLE
+                        .set(handle)
+                        .expect("SERVICE_DISCOVERY_HANDLE already set");
+                    info!("ROS service discovery thread started successfully");
+                }
+                Err(e) => {
+                    error!("Failed to start ROS service discovery thread: {}", e);
+                    error!("Falling back to process-based container checking");
+                }
+            }
+        } else {
+            info!("Service readiness checking disabled (use --wait-for-service-ready to enable)");
+        }
+
         // Build the async runtime.
         let runtime = Runtime::new()?;
 
@@ -216,6 +249,14 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
         },
         load_node_delay: Duration::from_millis(opts.delay_load_node_millis),
+        service_wait_config: if opts.wait_for_service_ready {
+            Some(crate::container_readiness::ContainerWaitConfig::new(
+                opts.service_ready_timeout_secs,
+                opts.service_poll_interval_ms,
+            ))
+        } else {
+            None
+        },
     };
 
     // Create the task set to load composable nodes according to user

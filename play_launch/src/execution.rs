@@ -31,6 +31,7 @@ pub struct ComposableNodeExecutionConfig {
     pub load_orphan_composable_nodes: bool,
     pub spawn_config: SpawnComposableNodeConfig,
     pub load_node_delay: Duration,
+    pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -138,6 +139,7 @@ pub fn spawn_or_load_composable_nodes(
                 nice_load_node_contexts,
                 config.spawn_config,
                 config.load_node_delay,
+                config.service_wait_config,
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -382,6 +384,7 @@ fn spawn_node_containers_and_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
     load_node_delay: Duration,
+    service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -394,13 +397,33 @@ fn spawn_node_containers_and_load_composable_nodes(
     let (container_tasks, nice_load_node_groups, container_pids) =
         spawn_node_containers(container_groups);
 
+    let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
+
     let load_composable_nodes_task = async move {
         if nice_load_node_groups.is_empty() {
             return;
         }
 
-        // Wait for container processes to be running and stable
+        // First, wait for container processes to be running
         wait_for_containers_running(container_pids, load_node_delay).await;
+
+        // Optionally, wait for container services to be ready
+        if let Some(service_config) = service_wait_config {
+            if let Some(discovery_handle) = crate::SERVICE_DISCOVERY_HANDLE.get() {
+                info!("Waiting for container services to be ready...");
+                if let Err(e) = crate::container_readiness::wait_for_containers_ready(
+                    &container_names_vec,
+                    &service_config,
+                    discovery_handle,
+                )
+                .await
+                {
+                    error!("Error waiting for container services: {}", e);
+                }
+            } else {
+                warn!("Service discovery not initialized, skipping service readiness check");
+            }
+        }
 
         info!("Proceeding to load composable nodes");
 

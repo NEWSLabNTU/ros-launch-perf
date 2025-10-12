@@ -29,4 +29,19 @@ pub struct Options {
 
     #[clap(long)]
     pub print_shell: bool,
+
+    /// Wait for container services to be available via ROS service discovery.
+    /// If disabled, only waits for container processes to start (faster but less reliable).
+    #[clap(long)]
+    pub wait_for_service_ready: bool,
+
+    /// Maximum time to wait for each container service (seconds).
+    /// Set to 0 for unlimited wait time. Only used with --wait-for-service-ready.
+    #[clap(long, default_value = "120")]
+    pub service_ready_timeout_secs: u64,
+
+    /// Interval for polling container service availability (milliseconds).
+    /// Only used with --wait-for-service-ready.
+    #[clap(long, default_value = "500")]
+    pub service_poll_interval_ms: u64,
 }

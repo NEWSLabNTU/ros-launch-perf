@@ -1,19 +1,24 @@
 //! Container readiness checking module
 //!
-//! **STATUS: Currently Unused**
+//! This module provides ROS service discovery for checking when containers are ready.
+//! It uses rclrs native service discovery to check for `/_container/load_node` services.
 //!
-//! This module contains ROS service discovery code for checking container readiness.
-//! It was implemented using rclrs native service discovery but disabled because:
-//! - DDS service discovery is unreliable/extremely slow in some environments (e.g., Autoware)
-//! - `ros2 service list` and `rclrs::Node::get_service_names_and_types()` can hang indefinitely
-//! - Process-based checking (verifying container PIDs) is more reliable and instant
+//! ## Usage
 //!
-//! The code is kept for potential future use if DDS discovery issues are resolved.
+//! Enable with `--wait-for-service-ready` flag. By default, only process-based checking is used
+//! (see `execution::wait_for_containers_running()`), which is faster but less reliable for
+//! complex systems like Autoware where DDS initialization takes significant time.
 //!
-//! **Alternative Implementation:** See `execution::wait_for_containers_running()` which uses
-//! process PID checking instead of service discovery.
-
-#![allow(dead_code)]
+//! ## Timeout Options
+//!
+//! - `--service-ready-timeout-secs 0`: Wait indefinitely until services are available
+//! - `--service-ready-timeout-secs N`: Wait up to N seconds per container (default: 120)
+//!
+//! ## Performance Notes
+//!
+//! - DDS service discovery can be slow in large systems (several minutes for Autoware)
+//! - Consider using longer timeouts or unlimited wait for production systems
+//! - Process-based checking is faster but doesn't verify DDS readiness
 
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -22,40 +27,46 @@ use tracing::{debug, error, info, warn};
 /// Configuration for waiting for container readiness
 #[derive(Clone, Debug)]
 pub struct ContainerWaitConfig {
-    pub max_wait: Duration,
+    /// Maximum wait duration. None means unlimited wait.
+    pub max_wait: Option<Duration>,
     pub poll_interval: Duration,
 }
 
 impl ContainerWaitConfig {
+    /// Create a new config. If timeout_secs is 0, wait time is unlimited.
     pub fn new(timeout_secs: u64, poll_interval_ms: u64) -> Self {
         Self {
-            max_wait: Duration::from_secs(timeout_secs),
+            max_wait: if timeout_secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(timeout_secs))
+            },
             poll_interval: Duration::from_millis(poll_interval_ms),
         }
     }
 }
 
-/// Request to check if a service exists
+/// Request to check if a container node is ready
 #[derive(Debug)]
-struct ServiceCheckRequest {
-    service_name: String,
+struct ContainerCheckRequest {
+    container_name: String,
     response_tx: oneshot::Sender<bool>,
 }
 
 /// Handle for communicating with the ROS service discovery thread
 #[derive(Clone, Debug)]
 pub struct ServiceDiscoveryHandle {
-    request_tx: mpsc::UnboundedSender<ServiceCheckRequest>,
+    request_tx: mpsc::UnboundedSender<ContainerCheckRequest>,
 }
 
 impl ServiceDiscoveryHandle {
-    /// Check if a service exists
-    pub async fn check_service_exists(&self, service_name: String) -> eyre::Result<bool> {
+    /// Check if a container is ready by querying its services
+    pub async fn check_container_ready(&self, container_name: String) -> eyre::Result<bool> {
         let (response_tx, response_rx) = oneshot::channel();
 
         self.request_tx
-            .send(ServiceCheckRequest {
-                service_name,
+            .send(ContainerCheckRequest {
+                container_name,
                 response_tx,
             })
             .map_err(|_| eyre::eyre!("ROS discovery thread has stopped"))?;
@@ -82,71 +93,121 @@ pub fn start_service_discovery_thread() -> eyre::Result<ServiceDiscoveryHandle> 
     Ok(ServiceDiscoveryHandle { request_tx })
 }
 
+/// Parse container full name into (node_name, namespace)
+/// Examples:
+/// - "/test_container" -> ("test_container", "/")
+/// - "/system/container" -> ("container", "/system")
+/// - "container" -> ("container", "/")
+fn parse_container_name(full_name: &str) -> (&str, &str) {
+    if full_name.is_empty() {
+        return ("", "/");
+    }
+
+    // Ensure the name starts with /
+    let normalized = if full_name.starts_with('/') {
+        full_name
+    } else {
+        // If it doesn't start with /, it's in root namespace
+        return (full_name, "/");
+    };
+
+    // Find the last slash to separate namespace from name
+    if let Some(last_slash_idx) = normalized[1..].rfind('/') {
+        // Found a slash after the leading slash
+        let actual_idx = last_slash_idx + 1; // Adjust for starting search at index 1
+        let namespace = &normalized[..actual_idx];
+        let name = &normalized[actual_idx + 1..];
+        (name, namespace)
+    } else {
+        // Only one slash at the beginning, so it's in root namespace
+        let name = &normalized[1..];
+        (name, "/")
+    }
+}
+
 /// Run the ROS discovery loop in a dedicated thread
 fn run_ros_discovery_loop(
-    mut request_rx: mpsc::UnboundedReceiver<ServiceCheckRequest>,
+    mut request_rx: mpsc::UnboundedReceiver<ContainerCheckRequest>,
 ) -> eyre::Result<()> {
     use rclrs::CreateBasicExecutor;
 
-    info!("Starting ROS service discovery thread");
+    info!("Starting ROS container discovery thread");
 
     // Initialize ROS context and node
     let context = rclrs::Context::new(std::env::args(), rclrs::InitOptions::default())?;
     let executor = context.create_basic_executor();
-    let node = executor.create_node("play_launch_discovery")?;
+    let node = executor.create_node("play_launch_container_discovery")?;
 
-    info!("ROS service discovery node initialized");
+    info!("ROS container discovery node initialized");
 
     // Process requests
     while let Some(request) = request_rx.blocking_recv() {
-        let ServiceCheckRequest {
-            service_name,
+        let ContainerCheckRequest {
+            container_name,
             response_tx,
         } = request;
 
-        // Query service existence
-        let exists = match node.get_service_names_and_types() {
+        // Parse container name into node name and namespace
+        let (node_name, namespace) = parse_container_name(&container_name);
+
+        debug!(
+            "Checking container '{}' (node: '{}', ns: '{}')",
+            container_name, node_name, namespace
+        );
+
+        // Query services for this specific node using per-node API
+        let is_ready = match node.get_service_names_and_types_by_node(node_name, namespace) {
             Ok(services) => {
-                let found = services.contains_key(&service_name);
+                debug!(
+                    "Found {} services for container '{}' (node: '{}', ns: '{}')",
+                    services.len(),
+                    container_name,
+                    node_name,
+                    namespace
+                );
 
-                if !found {
-                    // Log all available services to help debug
-                    debug!("Service '{}' not found. Available services ({}):",
-                           service_name, services.len());
-
-                    // Show container-related services for debugging
-                    let container_services: Vec<_> = services.keys()
-                        .filter(|k| k.contains("_container") || k.contains("load_node"))
-                        .collect();
-
-                    if !container_services.is_empty() {
-                        debug!("  Container-related services found:");
-                        for svc in container_services.iter().take(10) {
-                            debug!("    - {}", svc);
-                        }
-                        if container_services.len() > 10 {
-                            debug!("    ... and {} more", container_services.len() - 10);
-                        }
-                    } else {
-                        debug!("  No container-related services found yet");
-                    }
-                } else {
-                    info!("Service '{}' found!", service_name);
+                // Log all service names for debugging
+                for service_name in services.keys() {
+                    debug!("  Service: {}", service_name);
                 }
 
-                found
+                // Check if this node has the container services
+                let has_list_nodes = services
+                    .keys()
+                    .any(|name| name.ends_with("/_container/list_nodes"));
+
+                let has_load_node = services
+                    .keys()
+                    .any(|name| name.ends_with("/_container/load_node"));
+
+                if has_list_nodes && has_load_node {
+                    info!(
+                        "Container '{}' is ready (has list_nodes and load_node services)",
+                        container_name
+                    );
+                    true
+                } else {
+                    debug!(
+                        "Container '{}' not ready yet (list_nodes: {}, load_node: {})",
+                        container_name, has_list_nodes, has_load_node
+                    );
+                    false
+                }
             }
             Err(e) => {
-                warn!("Failed to get service names: {}", e);
+                warn!(
+                    "Failed to query services for container '{}' (node: '{}', ns: '{}'): {}",
+                    container_name, node_name, namespace, e
+                );
                 false
             }
         };
 
         // Send response (ignore if receiver dropped)
-        let _ = response_tx.send(exists);
+        let _ = response_tx.send(is_ready);
     }
 
-    info!("ROS service discovery thread shutting down");
+    info!("ROS container discovery thread shutting down");
     Ok(())
 }
 
@@ -201,24 +262,30 @@ pub async fn wait_for_containers_ready(
     Ok(())
 }
 
-/// Wait for a single container to be ready by polling for its load_node service
+/// Wait for a single container to be ready by checking its services via per-node query
 async fn wait_for_single_container(
     container_name: &str,
     config: &ContainerWaitConfig,
     discovery_handle: &ServiceDiscoveryHandle,
 ) -> eyre::Result<()> {
-    let service_name = format!("{}/_container/load_node", container_name);
-    let deadline = tokio::time::Instant::now() + config.max_wait;
+    let deadline = config.max_wait.map(|d| tokio::time::Instant::now() + d);
 
-    debug!(
-        "Waiting for container '{}' to expose service '{}'",
-        container_name, service_name
-    );
+    if let Some(max_wait) = config.max_wait {
+        debug!(
+            "Waiting up to {:?} for container '{}' to be ready",
+            max_wait, container_name
+        );
+    } else {
+        debug!(
+            "Waiting indefinitely for container '{}' to be ready",
+            container_name
+        );
+    }
 
     loop {
-        // Check if the service is available
+        // Check if the container is ready (has required services)
         match discovery_handle
-            .check_service_exists(service_name.clone())
+            .check_container_ready(container_name.to_string())
             .await
         {
             Ok(true) => {
@@ -226,24 +293,24 @@ async fn wait_for_single_container(
                 return Ok(());
             }
             Ok(false) => {
-                // Service not yet available, continue polling
+                // Container not yet ready, continue polling
             }
             Err(e) => {
-                warn!(
-                    "Error checking service availability for '{}': {}",
-                    container_name, e
-                );
+                warn!("Error checking container '{}': {}", container_name, e);
                 // Continue polling despite error
             }
         }
 
-        // Check timeout
-        if tokio::time::Instant::now() >= deadline {
-            warn!(
-                "Timeout waiting for container '{}' after {:?}, proceeding anyway",
-                container_name, config.max_wait
-            );
-            return Ok(());
+        // Check timeout (if set)
+        if let Some(deadline) = deadline {
+            if tokio::time::Instant::now() >= deadline {
+                warn!(
+                    "Timeout waiting for container '{}' after {:?}, proceeding anyway",
+                    container_name,
+                    config.max_wait.unwrap()
+                );
+                return Ok(());
+            }
         }
 
         tokio::time::sleep(config.poll_interval).await;
