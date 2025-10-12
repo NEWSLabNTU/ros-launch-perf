@@ -216,14 +216,6 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
         },
         load_node_delay: Duration::from_millis(opts.delay_load_node_millis),
-        container_wait_config: if opts.skip_container_check {
-            None
-        } else {
-            Some(crate::container_readiness::ContainerWaitConfig::new(
-                opts.container_ready_timeout_secs,
-                opts.container_poll_interval_ms,
-            ))
-        },
     };
 
     // Create the task set to load composable nodes according to user

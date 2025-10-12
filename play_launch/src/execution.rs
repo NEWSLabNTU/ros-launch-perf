@@ -31,7 +31,6 @@ pub struct ComposableNodeExecutionConfig {
     pub load_orphan_composable_nodes: bool,
     pub spawn_config: SpawnComposableNodeConfig,
     pub load_node_delay: Duration,
-    pub container_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -139,7 +138,6 @@ pub fn spawn_or_load_composable_nodes(
                 nice_load_node_contexts,
                 config.spawn_config,
                 config.load_node_delay,
-                config.container_wait_config.clone(),
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -171,6 +169,12 @@ pub fn spawn_or_load_composable_nodes(
             load_orphan_composable_nodes_task,
         }
     }
+}
+
+/// Container process info for tracking
+struct ContainerProcessInfo {
+    pub pid: u32,
+    pub output_dir: std::path::PathBuf,
 }
 
 /// Classify the container and composable node contexts into groups by
@@ -218,7 +222,10 @@ fn spawn_node_containers(
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     HashMap<String, ComposableNodeGroup>,
+    Vec<ContainerProcessInfo>,
 ) {
+    let mut all_container_pids = Vec::new();
+
     let (container_task_groups, load_node_groups): (Vec<_>, HashMap<_, _>) = container_groups
         .into_iter()
         .filter_map(|(container_name, group)| {
@@ -227,43 +234,53 @@ fn spawn_node_containers(
                 composable_node_contexts: load_node_contexts,
             } = group;
 
-            // Spawn all container nodes in the group.
-            let container_tasks: Vec<_> = container_contexts
-                .into_iter()
-                .filter_map(|context| {
-                    let exec = match context.to_exec_context() {
-                        Ok(exec) => exec,
-                        Err(err) => {
-                            error!("Unable to prepare execution for node: {err}",);
-                            error!("which is caused by the node: {:#?}", context.record);
-                            return None;
-                        }
-                    };
-                    let ExecutionContext {
-                        log_name,
-                        output_dir,
-                        mut command,
-                    } = exec;
+            // Spawn all container nodes in the group and collect PIDs
+            let mut container_tasks = Vec::new();
+            let mut container_pids = Vec::new();
 
-                    let child = match command.spawn() {
-                        Ok(child) => child,
-                        Err(err) => {
-                            error!("{log_name} is unable to start: {err}",);
-                            error!("Check {}", output_dir.display());
-                            return None;
-                        }
-                    };
-                    let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+            for context in container_contexts {
+                let exec = match context.to_exec_context() {
+                    Ok(exec) => exec,
+                    Err(err) => {
+                        error!("Unable to prepare execution for node: {err}",);
+                        error!("which is caused by the node: {:#?}", context.record);
+                        continue;
+                    }
+                };
+                let ExecutionContext {
+                    log_name,
+                    output_dir,
+                    mut command,
+                } = exec;
 
-                    Some(task)
-                })
-                .collect();
+                let child = match command.spawn() {
+                    Ok(child) => child,
+                    Err(err) => {
+                        error!("{log_name} is unable to start: {err}",);
+                        error!("Check {}", output_dir.display());
+                        continue;
+                    }
+                };
+
+                // Capture PID for readiness checking
+                if let Some(pid) = child.id() {
+                    container_pids.push(ContainerProcessInfo {
+                        pid,
+                        output_dir: output_dir.clone(),
+                    });
+                }
+
+                let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+                container_tasks.push(task);
+            }
 
             // If there is no container node spawned successfully,
             // skip later load node tasks.
             if container_tasks.is_empty() {
                 return None;
             }
+
+            all_container_pids.extend(container_pids);
 
             Some((container_name, container_tasks, load_node_contexts))
         })
@@ -282,7 +299,7 @@ fn spawn_node_containers(
 
     let container_tasks = container_task_groups.into_iter().flatten().collect();
 
-    (container_tasks, load_node_groups)
+    (container_tasks, load_node_groups, all_container_pids)
 }
 
 /// Run all composable nodes in each container group.
@@ -298,6 +315,65 @@ async fn run_load_composable_node_groups(
     run_load_composable_nodes(load_node_contexts, config).await;
 }
 
+/// Check if a process with given PID is still running
+fn is_process_running(pid: u32) -> bool {
+    // On Unix, we can check if a process exists by sending signal 0
+    #[cfg(unix)]
+    {
+        use std::process::Command;
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-Unix, assume it's running
+        true
+    }
+}
+
+/// Wait for container processes to be running and stable
+async fn wait_for_containers_running(
+    container_pids: Vec<ContainerProcessInfo>,
+    initial_delay: Duration,
+) {
+    if container_pids.is_empty() {
+        return;
+    }
+
+    info!(
+        "Waiting for {} container(s) to start...",
+        container_pids.len()
+    );
+
+    // Initial delay to let processes start
+    tokio::time::sleep(initial_delay).await;
+
+    // Check that all container processes are running
+    let mut all_running = true;
+    for container_info in &container_pids {
+        if !is_process_running(container_info.pid) {
+            error!(
+                "Container process PID {} exited prematurely (check {})",
+                container_info.pid,
+                container_info.output_dir.display()
+            );
+            all_running = false;
+        } else {
+            debug!("Container PID {} is running", container_info.pid);
+        }
+    }
+
+    if all_running {
+        info!("All {} container(s) are running", container_pids.len());
+    } else {
+        warn!("Some containers failed to start, but continuing anyway");
+    }
+}
+
 /// Spawn node container processes and load all composable nodes to
 /// them.
 fn spawn_node_containers_and_load_composable_nodes(
@@ -306,7 +382,6 @@ fn spawn_node_containers_and_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
     load_node_delay: Duration,
-    container_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -315,36 +390,19 @@ fn spawn_node_containers_and_load_composable_nodes(
     let container_groups =
         build_container_groups(container_names, container_contexts, load_node_contexts);
 
-    // Spawn node containers in each node container group
-    let (container_tasks, nice_load_node_groups) = spawn_node_containers(container_groups);
-
-    let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
+    // Spawn node containers in each node container group and get their PIDs
+    let (container_tasks, nice_load_node_groups, container_pids) =
+        spawn_node_containers(container_groups);
 
     let load_composable_nodes_task = async move {
         if nice_load_node_groups.is_empty() {
             return;
         }
 
-        // Wait for containers to be ready
-        if let Some(wait_config) = container_wait_config {
-            // New behavior: wait for service availability
-            info!("Waiting for containers to be ready...");
-            if let Err(e) = crate::container_readiness::wait_for_containers_ready(
-                &container_names_vec,
-                &wait_config,
-            )
-            .await
-            {
-                error!("Error waiting for containers: {}", e);
-            }
-        } else {
-            // Legacy behavior: fixed delay
-            info!(
-                "Using fixed delay of {:?} before loading composable nodes",
-                load_node_delay
-            );
-            tokio::time::sleep(load_node_delay).await;
-        }
+        // Wait for container processes to be running and stable
+        wait_for_containers_running(container_pids, load_node_delay).await;
+
+        info!("Proceeding to load composable nodes");
 
         // Spawn composable nodes having belonging containers.
         run_load_composable_node_groups(nice_load_node_groups, config).await;

@@ -20,6 +20,8 @@ pub struct LaunchDump {
     pub node: Vec<NodeRecord>,
     pub load_node: Vec<ComposableNodeRecord>,
     pub container: Vec<NodeContainerRecord>,
+    /// Lifecycle node names tracked for future implementation.
+    /// Currently lifecycle nodes require manual intervention and are not automatically handled.
     #[allow(dead_code)]
     pub lifecycle_node: Vec<String>,
     pub file_data: HashMap<PathBuf, String>,
