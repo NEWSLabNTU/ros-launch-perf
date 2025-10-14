@@ -228,14 +228,15 @@ fn call_component_load_subprocess(
         args.push(format!("{}:={}", name, value));
     }
 
-    // Use bash -c to execute ros2 command
+    // Execute ros2 command directly without bash to avoid escaping issues
     // The subprocess inherits the environment from the parent process
-    let ros2_cmdline = format!("ros2 {}", args.join(" "));
-    debug!("Executing via bash: {}", ros2_cmdline);
+    debug!(
+        "Executing: ros2 component load {} {} {}",
+        container_name, package, plugin
+    );
 
-    let mut cmd = Command::new("/usr/bin/bash");
-    cmd.arg("-c")
-        .arg(&ros2_cmdline)
+    let mut cmd = Command::new("ros2");
+    cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

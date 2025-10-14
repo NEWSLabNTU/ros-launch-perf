@@ -190,8 +190,21 @@ fn generate_shell(opts: &options::Options) -> eyre::Result<()> {
     Ok(())
 }
 
+/// Guard that ensures child processes are cleaned up on drop
+struct CleanupGuard;
+
+impl Drop for CleanupGuard {
+    fn drop(&mut self) {
+        debug!("CleanupGuard: Ensuring all child processes are terminated");
+        kill_all_descendants();
+    }
+}
+
 /// Play the launch according to the launch record.
 async fn play(opts: &options::Options) -> eyre::Result<()> {
+    // Install cleanup guard to ensure children are killed even if we're interrupted
+    let _cleanup_guard = CleanupGuard;
+
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
     // Prepare directories
