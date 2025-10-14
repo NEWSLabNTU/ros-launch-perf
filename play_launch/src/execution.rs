@@ -25,13 +25,15 @@ pub struct SpawnComposableNodeConfig {
 }
 
 /// Configuration for executing composable nodes.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ComposableNodeExecutionConfig {
     pub standalone_composable_nodes: bool,
     pub load_orphan_composable_nodes: bool,
     pub spawn_config: SpawnComposableNodeConfig,
     pub load_node_delay: Duration,
     pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
+    pub load_method: crate::options::LoadMethod,
+    pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -140,6 +142,8 @@ pub fn spawn_or_load_composable_nodes(
                 config.spawn_config,
                 config.load_node_delay,
                 config.service_wait_config,
+                config.load_method,
+                config.component_loader.clone(),
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -155,7 +159,18 @@ pub fn spawn_or_load_composable_nodes(
                 "orphan composable node: {}",
                 orphan_load_node_contexts.len()
             );
-            let task = run_load_composable_nodes(orphan_load_node_contexts, config.spawn_config);
+            let load_method = config.load_method;
+            let component_loader = config.component_loader.clone();
+            let spawn_config = config.spawn_config;
+            let task = async move {
+                run_load_composable_nodes(
+                    orphan_load_node_contexts,
+                    spawn_config,
+                    load_method,
+                    &component_loader,
+                )
+                .await
+            };
             Some(task.boxed())
         } else {
             warn!(
@@ -308,13 +323,15 @@ fn spawn_node_containers(
 async fn run_load_composable_node_groups(
     load_node_groups: HashMap<String, ComposableNodeGroup>,
     config: SpawnComposableNodeConfig,
+    load_method: crate::options::LoadMethod,
+    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
 ) {
     let load_node_contexts: Vec<_> = load_node_groups
         .into_iter()
         .flat_map(|(_container_name, context)| context.composable_node_contexts)
         .collect();
 
-    run_load_composable_nodes(load_node_contexts, config).await;
+    run_load_composable_nodes(load_node_contexts, config, load_method, component_loader).await;
 }
 
 /// Check if a process with given PID is still running
@@ -385,6 +402,8 @@ fn spawn_node_containers_and_load_composable_nodes(
     config: SpawnComposableNodeConfig,
     load_node_delay: Duration,
     service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
+    load_method: crate::options::LoadMethod,
+    component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -428,7 +447,13 @@ fn spawn_node_containers_and_load_composable_nodes(
         info!("Proceeding to load composable nodes");
 
         // Spawn composable nodes having belonging containers.
-        run_load_composable_node_groups(nice_load_node_groups, config).await;
+        run_load_composable_node_groups(
+            nice_load_node_groups,
+            config,
+            load_method,
+            &component_loader,
+        )
+        .await;
     };
 
     (container_tasks, load_composable_nodes_task)
@@ -479,6 +504,8 @@ fn spawn_standalone_composable_nodes(
 async fn run_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     config: SpawnComposableNodeConfig,
+    load_method: crate::options::LoadMethod,
+    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
 ) {
     let SpawnComposableNodeConfig {
         max_concurrent_spawn,
@@ -490,7 +517,14 @@ async fn run_load_composable_nodes(
 
     let mut futures = futures::stream::iter(load_node_contexts.into_iter())
         .map(|context| async move {
-            run_load_composable_node(&context, wait_timeout, max_attempts).await
+            run_load_composable_node(
+                &context,
+                wait_timeout,
+                max_attempts,
+                load_method,
+                component_loader,
+            )
+            .await
         })
         .buffer_unordered(max_concurrent_spawn)
         .zip(futures::stream::iter(0..));
@@ -510,6 +544,8 @@ async fn run_load_composable_node(
     context: &ComposableNodeContext,
     wait_timeout: Duration,
     max_attempts: usize,
+    load_method: crate::options::LoadMethod,
+    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
 ) {
     let ComposableNodeContext {
         log_name,
@@ -519,7 +555,17 @@ async fn run_load_composable_node(
     debug!("{log_name} is loading");
 
     for round in 1..=max_attempts {
-        match run_load_composable_node_once(context, wait_timeout, round).await {
+        let result = match load_method {
+            crate::options::LoadMethod::Service => {
+                run_load_composable_node_via_service(context, wait_timeout, round, component_loader)
+                    .await
+            }
+            crate::options::LoadMethod::Subprocess => {
+                run_load_composable_node_once(context, wait_timeout, round).await
+            }
+        };
+
+        match result {
             Ok(true) => return,
             Ok(false) => {
                 warn!("{log_name} fails to start. Retrying... ({round}/{max_attempts})");
@@ -536,7 +582,87 @@ async fn run_load_composable_node(
     error!("Check {}", output_dir.display());
 }
 
-/// Load one composable node once.
+/// Load one composable node via ROS service call
+async fn run_load_composable_node_via_service(
+    context: &ComposableNodeContext,
+    timeout: Duration,
+    round: usize,
+    component_loader: &Option<crate::component_loader::ComponentLoaderHandle>,
+) -> eyre::Result<bool> {
+    use std::io::Write;
+
+    let ComposableNodeContext {
+        log_name,
+        output_dir,
+        record,
+    } = context;
+
+    // Get the component loader handle
+    let loader = component_loader
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("Component loader not initialized"))?;
+
+    // Convert remaps to the format expected by the service
+    let remap_rules: Vec<String> = record
+        .remaps
+        .iter()
+        .map(|(from, to)| format!("{}:={}", from, to))
+        .collect();
+
+    // Convert extra_args HashMap to Vec
+    let extra_args: Vec<(String, String)> = record
+        .extra_args
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    // Ensure output directory exists before any file operations
+    std::fs::create_dir_all(output_dir)?;
+
+    // Call the service to load the node
+    debug!("{log_name}: Calling LoadNode service");
+    let response = loader
+        .load_node(
+            &record.target_container_name,
+            &record.package,
+            &record.plugin,
+            &record.node_name,
+            &record.namespace,
+            remap_rules,
+            record.params.clone(),
+            extra_args,
+            timeout,
+        )
+        .await?;
+
+    // Log the response
+    let response_path = output_dir.join(format!("service_response.{round}"));
+    let mut response_file = File::create(&response_path)?;
+    writeln!(response_file, "success: {}", response.success)?;
+    writeln!(response_file, "error_message: {}", response.error_message)?;
+    writeln!(response_file, "full_node_name: {}", response.full_node_name)?;
+    writeln!(response_file, "unique_id: {}", response.unique_id)?;
+
+    if !response.success {
+        warn!(
+            "{log_name}: LoadNode service returned failure: {}",
+            response.error_message
+        );
+        return Ok(false);
+    }
+
+    info!(
+        "{log_name}: Successfully loaded (unique_id: {})",
+        response.unique_id
+    );
+
+    // Write success status
+    save_composable_node_service_status(true, output_dir, log_name)?;
+
+    Ok(true)
+}
+
+/// Load one composable node once using subprocess.
 async fn run_load_composable_node_once(
     context: &ComposableNodeContext,
     timeout: Duration,
@@ -641,6 +767,32 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
 
 /// Save the status code for a completed composable node
 /// loading/execution process.
+/// Save status for service-based composable node loading
+fn save_composable_node_service_status(
+    success: bool,
+    output_dir: &Path,
+    log_name: &str,
+) -> eyre::Result<()> {
+    use std::io::Write;
+
+    let status_path = output_dir.join("status");
+    let mut status_file = File::create(status_path)?;
+
+    // Write 0 for success, 1 for failure (mimics exit codes)
+    let code = if success { 0 } else { 1 };
+    writeln!(status_file, "{code}")?;
+
+    if success {
+        debug!("{log_name} loading finishes successfully via service");
+    } else {
+        error!("{log_name} fails via service");
+        error!("Check {}", output_dir.display());
+    }
+
+    Ok(())
+}
+
+/// Save status for subprocess-based composable node loading
 fn save_composable_node_status(
     status: &ExitStatus,
     output_dir: &Path,

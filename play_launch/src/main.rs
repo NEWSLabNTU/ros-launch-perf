@@ -1,3 +1,5 @@
+mod component_loader;
+mod composition_interfaces;
 mod container_readiness;
 mod context;
 mod execution;
@@ -239,6 +241,21 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         .into_iter()
         .map(|future| future.boxed());
 
+    // Initialize component loader if using service-based loading
+    let component_loader = if opts.load_method == crate::options::LoadMethod::Service {
+        info!("Initializing component loader for service-based node loading");
+        match crate::component_loader::start_component_loader_thread() {
+            Ok(loader) => Some(loader),
+            Err(e) => {
+                error!("Failed to initialize component loader: {}", e);
+                error!("Falling back to subprocess method");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // Create composable node execution configuration
     let composable_node_config = ComposableNodeExecutionConfig {
         standalone_composable_nodes: opts.standalone_composable_nodes,
@@ -257,6 +274,8 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         } else {
             None
         },
+        load_method: opts.load_method,
+        component_loader,
     };
 
     // Create the task set to load composable nodes according to user
@@ -301,14 +320,49 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
 
     // Poll on all waiting tasks and consume finished tasks
-    // one-by-one, while also listening for Ctrl-C signal.
+    // one-by-one, while also listening for termination signals.
+
+    #[cfg(unix)]
+    let result = {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to register SIGTERM handler");
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down gracefully...");
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
+            }
+            _ = async {
+                while !wait_futures.is_empty() {
+                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                    if let Err(err) = result {
+                        error!("{err}");
+                    }
+                    let future_to_discard = wait_futures.remove(ix);
+                    drop(future_to_discard);
+                }
+            } => {
+                info!("All tasks completed normally");
+                Ok(())
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
     let result = tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl-C signal, shutting down gracefully...");
-            // Kill all descendant processes FIRST (before dropping futures)
-            // This ensures we find grandchildren before their parent processes are killed
+            info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
             kill_all_descendants();
-            // Drop all futures, which will trigger kill_on_drop for any remaining processes
             drop(wait_futures);
             info!("All child processes terminated");
             Ok(())
@@ -316,11 +370,9 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         _ = async {
             while !wait_futures.is_empty() {
                 let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-
                 if let Err(err) = result {
                     error!("{err}");
                 }
-
                 let future_to_discard = wait_futures.remove(ix);
                 drop(future_to_discard);
             }
