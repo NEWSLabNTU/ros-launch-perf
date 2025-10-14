@@ -65,14 +65,20 @@ impl ComponentLoaderHandle {
         };
 
         debug!("Sending load request to component loader thread...");
-        self.request_tx
-            .send(request)
-            .map_err(|_| eyre::eyre!("Component loader thread has stopped"))?;
+        self.request_tx.send(request).wrap_err_with(|| {
+            format!(
+                "Component loader thread has stopped (while loading {}/{} into {})",
+                package_name, plugin_name, container_name
+            )
+        })?;
 
         debug!("Waiting for response from component loader thread...");
-        let result = response_rx
-            .await
-            .map_err(|_| eyre::eyre!("Component loader dropped request"))?;
+        let result = response_rx.await.wrap_err_with(|| {
+            format!(
+                "Component loader dropped request for {}/{} into {}",
+                package_name, plugin_name, container_name
+            )
+        })?;
 
         debug!("Received response from component loader thread");
         result
@@ -222,14 +228,9 @@ fn call_component_load_subprocess(
         args.push(format!("{}:={}", name, value));
     }
 
-    // Use bash -c with ros2 to ensure environment is available
-    // Source ROS setup first to ensure all environment variables are set
-    let ros_distro = std::env::var("ROS_DISTRO").unwrap_or_else(|_| "humble".to_string());
-    let ros2_cmdline = format!(
-        "source /opt/ros/{}/setup.bash && ros2 {}",
-        ros_distro,
-        args.join(" ")
-    );
+    // Use bash -c to execute ros2 command
+    // The subprocess inherits the environment from the parent process
+    let ros2_cmdline = format!("ros2 {}", args.join(" "));
     debug!("Executing via bash: {}", ros2_cmdline);
 
     let mut cmd = Command::new("/usr/bin/bash");
@@ -239,17 +240,13 @@ fn call_component_load_subprocess(
         .stderr(Stdio::piped());
 
     debug!("About to spawn command");
-    let spawn_result = cmd.spawn();
-    let mut child = match spawn_result {
-        Ok(child) => {
-            debug!("Successfully spawned bash process");
-            child
-        }
-        Err(e) => {
-            error!("Failed to spawn bash: {} (kind: {:?})", e, e.kind());
-            return Err(eyre::eyre!("Failed to spawn bash: {}", e));
-        }
-    };
+    let mut child = cmd.spawn().wrap_err_with(|| {
+        format!(
+            "Failed to spawn bash to load {}/{} into {}",
+            package, plugin, container_name
+        )
+    })?;
+    debug!("Successfully spawned bash process");
 
     // Wait for completion with timeout
     let start = std::time::Instant::now();
@@ -303,7 +300,12 @@ fn call_component_load_subprocess(
                 std::thread::sleep(Duration::from_millis(100));
             }
             Err(e) => {
-                return Err(eyre::eyre!("Error waiting for process: {}", e));
+                return Err(eyre::eyre!("Error waiting for process: {}", e)).wrap_err_with(|| {
+                    format!(
+                        "While loading {}/{} into {}",
+                        package, plugin, container_name
+                    )
+                });
             }
         }
     }

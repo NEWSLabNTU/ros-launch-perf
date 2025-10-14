@@ -572,7 +572,7 @@ async fn run_load_composable_node(
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
             Err(err) => {
-                error!("{log_name} fails to due error: {err}");
+                error!("{log_name} fails due to error: {:?}", err);
                 break;
             }
         }
@@ -617,7 +617,14 @@ async fn run_load_composable_node_via_service(
         .collect();
 
     // Ensure output directory exists before any file operations
-    std::fs::create_dir_all(output_dir)?;
+    debug!("{log_name}: output_dir = {}", output_dir.display());
+    std::fs::create_dir_all(output_dir).wrap_err_with(|| {
+        format!(
+            "{}: Failed to create output directory: {}",
+            log_name,
+            output_dir.display()
+        )
+    })?;
 
     // Call the service to load the node
     debug!("{log_name}: Calling LoadNode service");
@@ -633,11 +640,18 @@ async fn run_load_composable_node_via_service(
             extra_args,
             timeout,
         )
-        .await?;
+        .await
+        .wrap_err_with(|| format!("{}: Failed to call LoadNode service", log_name))?;
 
     // Log the response
     let response_path = output_dir.join(format!("service_response.{round}"));
-    let mut response_file = File::create(&response_path)?;
+    let mut response_file = File::create(&response_path).wrap_err_with(|| {
+        format!(
+            "{}: Failed to create response file: {}",
+            log_name,
+            response_path.display()
+        )
+    })?;
     writeln!(response_file, "success: {}", response.success)?;
     writeln!(response_file, "error_message: {}", response.error_message)?;
     writeln!(response_file, "full_node_name: {}", response.full_node_name)?;
@@ -657,7 +671,8 @@ async fn run_load_composable_node_via_service(
     );
 
     // Write success status
-    save_composable_node_service_status(true, output_dir, log_name)?;
+    save_composable_node_service_status(true, output_dir, log_name)
+        .wrap_err_with(|| format!("{}: Failed to save service status", log_name))?;
 
     Ok(true)
 }
