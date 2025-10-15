@@ -34,7 +34,8 @@ pub struct ResourceMetrics {
     // Process info
     pub state: ProcessState,
     pub num_threads: u32,
-    pub num_fds: u32, // File descriptors
+    pub num_fds: u32,       // File descriptors
+    pub num_processes: u32, // Number of processes in tree (parent + children)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -76,6 +77,37 @@ pub struct ResourceMonitor {
     csv_writers: HashMap<String, Writer<File>>,
 }
 
+/// Find all subprocess PIDs recursively (Linux only)
+#[cfg(target_os = "linux")]
+fn find_subprocess_pids(parent_pid: u32) -> Vec<u32> {
+    let mut pids = Vec::new();
+
+    // Read /proc/<pid>/task/<tid>/children for each thread
+    let task_dir = format!("/proc/{}/task", parent_pid);
+    if let Ok(entries) = std::fs::read_dir(task_dir) {
+        for entry in entries.flatten() {
+            let children_path = entry.path().join("children");
+            if let Ok(content) = std::fs::read_to_string(&children_path) {
+                for pid_str in content.split_whitespace() {
+                    if let Ok(child_pid) = pid_str.parse::<u32>() {
+                        pids.push(child_pid);
+                        // Recursively find grandchildren
+                        let mut grandchildren = find_subprocess_pids(child_pid);
+                        pids.append(&mut grandchildren);
+                    }
+                }
+            }
+        }
+    }
+
+    pids
+}
+
+#[cfg(not(target_os = "linux"))]
+fn find_subprocess_pids(_parent_pid: u32) -> Vec<u32> {
+    Vec::new()
+}
+
 impl ResourceMonitor {
     pub fn new(log_dir: PathBuf) -> Result<Self> {
         Ok(Self {
@@ -94,8 +126,33 @@ impl ResourceMonitor {
             .process(pid_obj)
             .ok_or_else(|| eyre::eyre!("Process {} not found", pid))?;
 
-        // Get disk usage (cumulative read/write bytes)
+        // Discover subprocesses for aggregation
+        let subprocess_pids = find_subprocess_pids(pid);
+
+        // Aggregate metrics from parent + all children
+        let mut cpu_percent = process.cpu_usage() as f64;
+        let mut cpu_user_time = process.run_time();
+        let mut rss_bytes = process.memory();
+        let mut vms_bytes = process.virtual_memory();
         let disk_usage = process.disk_usage();
+        let mut io_read_bytes = disk_usage.total_read_bytes;
+        let mut io_write_bytes = disk_usage.total_written_bytes;
+        let mut num_threads = process.tasks().map(|t| t.len() as u32).unwrap_or(1);
+
+        // Aggregate from subprocesses
+        for child_pid in &subprocess_pids {
+            let child_pid_obj = Pid::from_u32(*child_pid);
+            if let Some(child_process) = self.system.process(child_pid_obj) {
+                cpu_percent += child_process.cpu_usage() as f64;
+                cpu_user_time += child_process.run_time();
+                rss_bytes += child_process.memory();
+                vms_bytes += child_process.virtual_memory();
+                let child_disk = child_process.disk_usage();
+                io_read_bytes += child_disk.total_read_bytes;
+                io_write_bytes += child_disk.total_written_bytes;
+                num_threads += child_process.tasks().map(|t| t.len() as u32).unwrap_or(1);
+            }
+        }
 
         // Count open file descriptors (Linux-specific)
         #[cfg(target_os = "linux")]
@@ -115,22 +172,22 @@ impl ResourceMonitor {
             _ => ProcessState::Unknown,
         };
 
-        // Get thread count - in sysinfo 0.32, tasks() returns None if not available
-        let num_threads = process.tasks().map(|t| t.len() as u32).unwrap_or(1);
+        let num_processes = 1 + subprocess_pids.len() as u32;
 
         Ok(ResourceMetrics {
             timestamp: SystemTime::now(),
             pid,
             node_name: node_name.to_string(),
-            cpu_percent: process.cpu_usage() as f64,
-            cpu_user_time: process.run_time(),
-            rss_bytes: process.memory(),
-            vms_bytes: process.virtual_memory(),
-            io_read_bytes: disk_usage.total_read_bytes,
-            io_write_bytes: disk_usage.total_written_bytes,
+            cpu_percent,
+            cpu_user_time,
+            rss_bytes,
+            vms_bytes,
+            io_read_bytes,
+            io_write_bytes,
             state,
             num_threads,
             num_fds,
+            num_processes,
         })
     }
 
@@ -164,6 +221,7 @@ impl ResourceMonitor {
                     "state",
                     "num_threads",
                     "num_fds",
+                    "num_processes",
                 ])
                 .wrap_err("Failed to write CSV header")?;
 
@@ -193,6 +251,7 @@ impl ResourceMonitor {
                 metrics.state.as_str().to_string(),
                 metrics.num_threads.to_string(),
                 metrics.num_fds.to_string(),
+                metrics.num_processes.to_string(),
             ])
             .wrap_err_with(|| format!("Failed to write CSV row for {}", node_name))?;
 

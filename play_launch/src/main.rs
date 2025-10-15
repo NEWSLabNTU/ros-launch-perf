@@ -287,7 +287,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     info!("nodes: {}", pure_node_contexts.len());
 
     // Spawn non-container nodes
-    let non_container_node_tasks = spawn_nodes(pure_node_contexts)
+    let non_container_node_tasks = spawn_nodes(pure_node_contexts, Some(process_registry.clone()))
         .into_iter()
         .map(|future| future.boxed());
 
@@ -320,6 +320,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             None
         },
         component_loader,
+        process_registry: Some(process_registry.clone()),
     };
 
     // Create the task set to load composable nodes according to user

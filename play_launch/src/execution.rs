@@ -12,6 +12,7 @@ use std::{
     io::prelude::*,
     path::Path,
     process::ExitStatus,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tracing::{debug, error, info, warn};
@@ -33,6 +34,7 @@ pub struct ComposableNodeExecutionConfig {
     pub load_node_delay: Duration,
     pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
     pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+    pub process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -61,7 +63,10 @@ pub enum ComposableNodeTasks {
 }
 
 /// Spawn ROS node processes.
-pub fn spawn_nodes(node_contexts: Vec<NodeContext>) -> Vec<impl Future<Output = eyre::Result<()>>> {
+pub fn spawn_nodes(
+    node_contexts: Vec<NodeContext>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+) -> Vec<impl Future<Output = eyre::Result<()>>> {
     node_contexts
         .into_iter()
         .filter_map(|context| {
@@ -86,7 +91,29 @@ pub fn spawn_nodes(node_contexts: Vec<NodeContext>) -> Vec<impl Future<Output = 
                     return None;
                 }
             };
-            let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+
+            // Register PID for monitoring
+            if let Some(ref registry) = process_registry {
+                if let Some(pid) = child.id() {
+                    if let Ok(mut reg) = registry.lock() {
+                        reg.insert(pid, log_name.clone());
+                        debug!("Registered PID {} for node {}", pid, log_name);
+                    }
+                }
+            }
+
+            let registry_clone = process_registry.clone();
+            let log_name_clone = log_name.clone();
+            let task = async move {
+                let result = wait_for_node(&log_name, &output_dir, child).await;
+                // Unregister PID when process exits
+                if let Some(registry) = registry_clone {
+                    if let Ok(mut reg) = registry.lock() {
+                        reg.retain(|_, name| name != &log_name_clone);
+                    }
+                }
+                result
+            };
             Some(task)
         })
         .collect()
@@ -138,10 +165,7 @@ pub fn spawn_or_load_composable_nodes(
                 container_names,
                 container_contexts,
                 nice_load_node_contexts,
-                config.spawn_config,
-                config.load_node_delay,
-                config.service_wait_config,
-                config.component_loader.clone(),
+                &config,
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -232,6 +256,7 @@ fn build_container_groups(
 /// Spawn all node containers in each container group.
 fn spawn_node_containers(
     container_groups: HashMap<String, NodeContainerGroup>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     HashMap<String, ComposableNodeGroup>,
@@ -275,15 +300,34 @@ fn spawn_node_containers(
                     }
                 };
 
-                // Capture PID for readiness checking
+                // Capture PID for readiness checking and register for monitoring
                 if let Some(pid) = child.id() {
                     container_pids.push(ContainerProcessInfo {
                         pid,
                         output_dir: output_dir.clone(),
                     });
+
+                    // Register PID for monitoring
+                    if let Some(ref registry) = process_registry {
+                        if let Ok(mut reg) = registry.lock() {
+                            reg.insert(pid, log_name.clone());
+                            debug!("Registered container PID {} for node {}", pid, log_name);
+                        }
+                    }
                 }
 
-                let task = async move { wait_for_node(&log_name, &output_dir, child).await };
+                let registry_clone = process_registry.clone();
+                let log_name_clone = log_name.clone();
+                let task = async move {
+                    let result = wait_for_node(&log_name, &output_dir, child).await;
+                    // Unregister PID when container exits
+                    if let Some(registry) = registry_clone {
+                        if let Ok(mut reg) = registry.lock() {
+                            reg.retain(|_, name| name != &log_name_clone);
+                        }
+                    }
+                    result
+                };
                 container_tasks.push(task);
             }
 
@@ -394,10 +438,7 @@ fn spawn_node_containers_and_load_composable_nodes(
     container_names: &HashSet<String>,
     container_contexts: Vec<NodeContainerContext>,
     load_node_contexts: Vec<ComposableNodeContext>,
-    config: SpawnComposableNodeConfig,
-    load_node_delay: Duration,
-    service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
-    component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
+    config: &ComposableNodeExecutionConfig,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -408,9 +449,13 @@ fn spawn_node_containers_and_load_composable_nodes(
 
     // Spawn node containers in each node container group and get their PIDs
     let (container_tasks, nice_load_node_groups, container_pids) =
-        spawn_node_containers(container_groups);
+        spawn_node_containers(container_groups, config.process_registry.clone());
 
     let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
+    let load_node_delay = config.load_node_delay;
+    let service_wait_config = config.service_wait_config.clone();
+    let spawn_config = config.spawn_config;
+    let component_loader = config.component_loader.clone();
 
     let load_composable_nodes_task = async move {
         if nice_load_node_groups.is_empty() {
@@ -441,7 +486,7 @@ fn spawn_node_containers_and_load_composable_nodes(
         info!("Proceeding to load composable nodes");
 
         // Spawn composable nodes having belonging containers.
-        run_load_composable_node_groups(nice_load_node_groups, config, &component_loader).await;
+        run_load_composable_node_groups(nice_load_node_groups, spawn_config, &component_loader).await;
     };
 
     (container_tasks, load_composable_nodes_task)
