@@ -134,18 +134,34 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
 ## Important Configuration Options
 
 play_launch accepts these options (play_launch/src/options.rs):
+
+### Basic Options
 - `--log-dir <PATH>`: Log directory (default: `play_log`)
 - `--input-file <PATH>`: Input record file (default: `record.json`)
+- `--print-shell`: Generate shell script instead of executing
+
+### Runtime Configuration (Future)
+- `--config <PATH>` (short: `-c`): Runtime configuration file (YAML)
+  - Resource monitoring settings
+  - Per-process CPU affinity and nice values
+  - See `docs/resource-monitoring-design.md` for details
+
+### Resource Monitoring (Future)
+- `--enable-monitoring`: Enable resource monitoring for all nodes (overrides config file)
+- `--monitor-interval-ms <MS>`: Sampling interval in milliseconds (overrides config file)
+
+### Composable Node Loading
 - `--delay-load-node-millis <MS>`: Delay before loading composable nodes (default: 2000ms)
 - `--load-node-timeout-millis <MS>`: Timeout for composable node loading (default: 30000ms)
 - `--load-node-attempts <N>`: Max retry attempts (default: 3)
 - `--max-concurrent-load-node-spawn <N>`: Concurrent loading limit (default: 10)
 - `--standalone-composable-nodes`: Run composable nodes standalone instead of loading into containers
 - `--load-orphan-composable-nodes`: Load composable nodes that have no matching container
+
+### Container Readiness
 - `--wait-for-service-ready`: Enable container service readiness checking via ROS service discovery
 - `--service-ready-timeout-secs <N>`: Max wait time for container services (default: 120s, 0=unlimited)
 - `--service-poll-interval-ms <MS>`: Polling interval for service discovery (default: 500ms)
-- `--print-shell`: Generate shell script instead of executing
 
 ## Log Directory Structure
 
@@ -161,10 +177,13 @@ play_log/
 │   │       ├── pid        # process ID
 │   │       ├── status     # exit code
 │   │       └── cmdline    # executed command
-│   └── load_node/         # Composable node logs
-│       └── <container>/<package>/<plugin>/
-│           ├── service_response.<round>  # LoadNode service response
-│           └── status                    # final status (0=success, 1=failure)
+│   ├── load_node/         # Composable node logs
+│   │   └── <container>/<package>/<plugin>/
+│   │       ├── service_response.<round>  # LoadNode service response
+│   │       └── status                    # final status (0=success, 1=failure)
+│   └── metrics/           # Resource monitoring (future)
+│       └── <namespace>/
+│           └── <node_name>.csv  # Per-node resource metrics
 ```
 
 ## Dependencies
@@ -212,9 +231,45 @@ Lifecycle nodes are tracked separately in `launch_dump.lifecycle_node` but curre
 
 ### Autoware Integration Test
 Located in `scripts/autoware_test/`:
-- `run.sh`: Launches Autoware using play_launch
+- `Makefile`: Build automation with automatic environment sourcing
+  - `make run`: Start Autoware with play_launch
+  - `make test`: Run autonomous driving test
+  - `make full-test`: Complete test sequence
+  - `make clean`: Kill orphan ROS nodes
 - `test_autonomous_drive.py`: Automated autonomous driving test
-- `run_full_test.sh`: Complete test sequence (launch + autonomous driving)
 - `poses_config.yaml`: Validated poses for sample-map-planning
+- `README.md`: Comprehensive documentation
 
 Successfully tested with Autoware planning_simulator (52 composable nodes, 15 containers).
+
+## Future Features
+
+### Resource Monitoring (Design Phase)
+See `docs/resource-monitoring-design.md` for comprehensive design document.
+
+**Status**: Design complete, implementation not started.
+
+**Features**:
+- Per-node resource monitoring (CPU, memory, I/O, threads, FDs)
+- CSV logging for visualization and analysis
+- Process control: CPU affinity and nice values per node
+- Configuration via YAML file
+- CLI flags: `--config`, `--enable-monitoring`, `--monitor-interval-ms`
+
+**Implementation**:
+- Uses **sysinfo** crate for cross-platform process metrics
+- Background monitoring thread with configurable sampling interval
+- Zero overhead when disabled (default)
+- 3 implementation phases planned (1 week + 2-3 weeks + 3-4 weeks)
+
+**Example usage**:
+```bash
+# Enable monitoring for all nodes
+play_launch --enable-monitoring
+
+# Use config file for fine-grained control
+play_launch --config config.yaml
+
+# Override config with CLI flags
+play_launch -c config.yaml --enable-monitoring --monitor-interval-ms 500
+```
