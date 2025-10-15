@@ -44,4 +44,18 @@ pub struct Options {
     /// Only used with --wait-for-service-ready.
     #[clap(long, default_value = "500")]
     pub service_poll_interval_ms: u64,
+
+    /// Runtime configuration file (YAML).
+    /// Contains monitoring settings, process control, and other runtime options.
+    #[clap(long, short = 'c', value_name = "PATH")]
+    pub config: Option<PathBuf>,
+
+    /// Enable resource monitoring for all nodes.
+    /// This overrides the 'monitoring.enabled' setting in the config file.
+    #[clap(long)]
+    pub enable_monitoring: bool,
+
+    /// Resource sampling interval in milliseconds (overrides config file).
+    #[clap(long, value_name = "MS")]
+    pub monitor_interval_ms: Option<u64>,
 }

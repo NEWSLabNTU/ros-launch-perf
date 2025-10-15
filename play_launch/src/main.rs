@@ -1,13 +1,16 @@
 mod component_loader;
 mod composition_interfaces;
+mod config;
 mod container_readiness;
 mod context;
 mod execution;
 mod launch_dump;
 mod node_cmdline;
 mod options;
+mod resource_monitor;
 
 use crate::{
+    config::load_runtime_config,
     container_readiness::ServiceDiscoveryHandle,
     context::{
         prepare_composable_node_contexts, prepare_node_contexts, ComposableNodeContextSet,
@@ -19,6 +22,7 @@ use crate::{
     },
     launch_dump::{load_and_transform_node_records, load_launch_dump, NodeContainerRecord},
     options::Options,
+    resource_monitor::{spawn_monitor_thread, MonitorConfig},
 };
 use clap::Parser;
 use eyre::Context;
@@ -26,12 +30,12 @@ use futures::{future::JoinAll, FutureExt};
 use itertools::chain;
 use rayon::prelude::*;
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     io::{self, prelude::*},
     path::{Path, PathBuf},
     process,
-    sync::OnceLock,
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::runtime::Runtime;
@@ -205,6 +209,13 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let _cleanup_guard = CleanupGuard;
 
+    // Load runtime configuration
+    let runtime_config = load_runtime_config(
+        opts.config.as_deref(),
+        opts.enable_monitoring,
+        opts.monitor_interval_ms,
+    )?;
+
     let launch_dump = load_launch_dump(&opts.input_file)?;
 
     // Prepare directories
@@ -220,6 +231,32 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     let load_node_log_dir = log_dir.join("load_node");
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
+
+    // Initialize monitoring if enabled
+    let process_registry = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
+    let _monitor_thread = if runtime_config.monitoring.enabled {
+        let monitor_config = MonitorConfig {
+            enabled: true,
+            sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
+            log_dir: log_dir.clone(),
+        };
+        match spawn_monitor_thread(monitor_config, process_registry.clone()) {
+            Ok(handle) => {
+                info!(
+                    "Resource monitoring enabled (interval: {}ms)",
+                    runtime_config.monitoring.sample_interval_ms
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                error!("Failed to start monitoring thread: {}", e);
+                None
+            }
+        }
+    } else {
+        debug!("Resource monitoring disabled");
+        None
+    };
 
     // Build a table of composable node containers
     let container_names: HashSet<String> = launch_dump

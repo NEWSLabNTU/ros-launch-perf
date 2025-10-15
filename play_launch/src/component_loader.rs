@@ -7,11 +7,11 @@
 // subprocesses, which eliminates Python startup overhead and enables better
 // parallelization.
 
-use crate::composition_interfaces::{LoadNodeRequest, LoadNodeResponse};
+use crate::composition_interfaces::LoadNodeResponse;
 use eyre::{Context as _, Result};
-use std::{collections::HashMap, time::Duration};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Handle to the component loader background thread
 #[derive(Clone)]
@@ -37,6 +37,7 @@ impl ComponentLoaderHandle {
     /// Request to load a composable node into a container
     ///
     /// Returns a future that resolves when the service call completes
+    #[allow(clippy::too_many_arguments)]
     pub async fn load_node(
         &self,
         container_name: &str,
@@ -116,7 +117,7 @@ fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest
         .context("Failed to create ROS context")?;
 
     let executor = context.create_basic_executor();
-    let node = executor
+    let _node = executor
         .create_node("play_launch_component_loader")
         .context("Failed to create component loader node")?;
 
@@ -170,6 +171,7 @@ fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest
 ///
 /// This is a temporary implementation that validates the infrastructure.
 /// Future versions will use direct rcl service calls.
+#[allow(clippy::too_many_arguments)]
 fn call_component_load_subprocess(
     container_name: &str,
     package: &str,

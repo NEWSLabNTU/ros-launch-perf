@@ -6,12 +6,14 @@
 //
 // TODO: Add full parameter/remap support in a later phase
 
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 
 // ============================================================================
 // FFI Declarations for composition_interfaces/srv/LoadNode
 // ============================================================================
 
+// FFI structures for future direct RCL service calls (not currently used)
+#[allow(dead_code)]
 #[repr(C)]
 pub struct rosidl_runtime_c__String {
     pub data: *mut std::os::raw::c_char,
@@ -19,6 +21,7 @@ pub struct rosidl_runtime_c__String {
     pub capacity: usize,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct rosidl_runtime_c__String__Sequence {
     pub data: *mut rosidl_runtime_c__String,
@@ -26,6 +29,7 @@ pub struct rosidl_runtime_c__String__Sequence {
     pub capacity: usize,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct rcl_interfaces__msg__Parameter__Sequence {
     pub data: *mut std::ffi::c_void, // Simplified - we don't handle parameters yet
@@ -33,6 +37,7 @@ pub struct rcl_interfaces__msg__Parameter__Sequence {
     pub capacity: usize,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct composition_interfaces__srv__LoadNode_Request {
     pub package_name: rosidl_runtime_c__String,
@@ -45,6 +50,7 @@ pub struct composition_interfaces__srv__LoadNode_Request {
     pub extra_arguments: rcl_interfaces__msg__Parameter__Sequence,
 }
 
+#[allow(dead_code)]
 #[repr(C)]
 pub struct composition_interfaces__srv__LoadNode_Response {
     pub success: bool,
@@ -54,6 +60,8 @@ pub struct composition_interfaces__srv__LoadNode_Response {
 }
 
 #[link(name = "composition_interfaces__rosidl_generator_c")]
+// FFI bindings for future direct RCL service calls
+#[allow(dead_code)]
 extern "C" {
     fn composition_interfaces__srv__LoadNode_Request__init(
         msg: *mut composition_interfaces__srv__LoadNode_Request,
@@ -84,6 +92,7 @@ extern "C" {
         size: usize,
     ) -> bool;
 
+    #[allow(dead_code)]
     fn rosidl_runtime_c__String__Sequence__fini(seq: *mut rosidl_runtime_c__String__Sequence);
 }
 
@@ -99,6 +108,8 @@ extern "C" {
 
 /// High-level request for loading a composable node
 #[derive(Clone, Debug, PartialEq)]
+// High-level wrapper for LoadNode request (prepared for future direct RCL calls)
+#[allow(dead_code)]
 pub struct LoadNodeRequest {
     pub package_name: String,
     pub plugin_name: String,
@@ -118,6 +129,7 @@ pub struct LoadNodeResponse {
     pub unique_id: u64,
 }
 
+#[allow(dead_code)]
 impl LoadNodeRequest {
     /// Create a new LoadNodeRequest
     pub fn new(
@@ -187,6 +199,7 @@ impl LoadNodeRequest {
     }
 }
 
+#[allow(dead_code)]
 impl LoadNodeResponse {
     /// Convert from FFI response structure
     ///
@@ -235,6 +248,8 @@ impl LoadNodeResponse {
 /// Get the type support handle for LoadNode service
 ///
 /// This is needed for rclrs service client creation
+/// Get type support for LoadNode service (for future direct RCL calls)
+#[allow(dead_code)]
 pub fn get_load_node_type_support() -> *const std::ffi::c_void {
     unsafe {
         rosidl_typesupport_c__get_service_type_support_handle__composition_interfaces__srv__LoadNode(

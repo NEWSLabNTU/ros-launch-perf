@@ -34,6 +34,7 @@ pub struct ComposableNodeContext {
     pub record: ComposableNodeRecord,
 }
 
+#[allow(dead_code)] // Kept for potential future standalone loading
 impl ComposableNodeContext {
     pub fn to_load_node_command(&self, round: usize) -> eyre::Result<Command> {
         let ComposableNodeContext {
