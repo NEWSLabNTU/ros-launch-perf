@@ -46,7 +46,7 @@ check-autoware:
 	@echo "Autoware installation: $(AUTOWARE_PATH)"
 
 run: check-autoware
-	@echo "Starting Autoware with play_launch..."
+	@echo "Starting Autoware with play_launch (monitoring enabled)..."
 	@cd $(AUTOWARE_PATH)/install && source setup.bash 2>&1 >/dev/null && cd $(SCRIPT_DIR) && \
 	dump_launch \
 		autoware_launch planning_simulator.launch.xml \
@@ -54,6 +54,8 @@ run: check-autoware
 		vehicle_model:=$(VEHICLE_MODEL) \
 		sensor_model:=$(SENSOR_MODEL) && \
 	play_launch \
+		--enable-monitoring \
+		--monitor-interval-ms 1000 \
 		--wait-for-service-ready \
 		--service-ready-timeout-secs $(SERVICE_TIMEOUT) \
 		--load-node-timeout-millis $(LOAD_TIMEOUT)
