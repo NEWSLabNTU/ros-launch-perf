@@ -1,0 +1,26 @@
+# Poses configuration for autonomous driving tests
+# These poses are validated for the sample-map-planning
+
+initial_pose:
+  position:
+    x: 3752.342041015625
+    y: 73736.09375
+    z: 19.3404
+  orientation:
+    x: -0.0008153484821679761
+    y: -0.00024282468558667022
+    z: -0.9583998316115443
+    w: 0.2854278175125686
+  description: "Initial pose for vehicle localization on sample-map-planning"
+
+goal_pose:
+  position:
+    x: 3758.956298828125
+    y: 73689.2890625
+    z: 19.62882244009854
+  orientation:
+    x: 0.0
+    y: 0.0
+    z: 0.9662634415358213
+    w: -0.2575557445512531
+  description: "Goal pose for autonomous navigation on sample-map-planning"
