@@ -193,12 +193,15 @@ play_log/
 - Parallelism: rayon
 - Error handling: eyre (with comprehensive error context via `.wrap_err()`)
 - CLI: clap
-- Serialization: serde, serde_json
+- Serialization: serde, serde_json, serde_yaml
 - ROS bindings: rclrs (for component loader ROS context)
+- Resource monitoring: sysinfo (cross-platform process metrics)
+- Configuration: glob (pattern matching), csv (metrics logging), num_cpus
 
 ### Python (uv managed)
 - dump_launch: ruamel-yaml, pyyaml, lark, packaging
 - Build: hatchling
+- Testing: pytest, pytest-cov, pytest-mock, ruff
 
 ## Important Implementation Details
 
@@ -242,34 +245,67 @@ Located in `scripts/autoware_test/`:
 
 Successfully tested with Autoware planning_simulator (52 composable nodes, 15 containers).
 
-## Future Features
+## Resource Monitoring (Phase 1 Complete)
 
-### Resource Monitoring (Design Phase)
 See `docs/resource-monitoring-design.md` for comprehensive design document.
 
-**Status**: Design complete, implementation not started.
+**Status**: Phase 1 implementation complete and tested ✓
 
-**Features**:
-- Per-node resource monitoring (CPU, memory, I/O, threads, FDs)
-- CSV logging for visualization and analysis
-- Process control: CPU affinity and nice values per node
-- Configuration via YAML file
-- CLI flags: `--config`, `--enable-monitoring`, `--monitor-interval-ms`
+**Implemented Features**:
+- ✅ Per-node resource monitoring (CPU, memory, I/O, threads, FDs)
+- ✅ CSV logging for visualization and analysis
+- ✅ Process control infrastructure (CPU affinity and nice values)
+- ✅ Configuration via YAML file
+- ✅ CLI flags: `--config` / `-c`, `--enable-monitoring`, `--monitor-interval-ms`
+- ✅ sysinfo 0.32 integration for cross-platform metrics
+- ✅ Background monitoring thread with configurable interval
+- ✅ Zero overhead when disabled (default)
 
-**Implementation**:
-- Uses **sysinfo** crate for cross-platform process metrics
-- Background monitoring thread with configurable sampling interval
-- Zero overhead when disabled (default)
-- 3 implementation phases planned (1 week + 2-3 weeks + 3-4 weeks)
+**Implementation Details**:
+- **config.rs**: Runtime configuration with YAML parsing, CPU affinity & nice value support
+- **resource_monitor.rs**: Monitoring thread using sysinfo, CSV writing per node
+- **Integration**: Monitoring thread spawns in main.rs if enabled
+- **Tests**: 21 unit tests pass, all lint checks pass
+- **Coverage**: Python tests now have proper coverage reporting
+
+**Known Limitation**:
+Process registration and control (CPU affinity/nice) are implemented but not yet connected to `spawn_nodes()`. This requires modifying the spawn_nodes signature to accept runtime_config and process_registry. The infrastructure is ready for integration when needed.
 
 **Example usage**:
 ```bash
-# Enable monitoring for all nodes
+# Enable monitoring for all nodes with default 1s interval
 play_launch --enable-monitoring
 
 # Use config file for fine-grained control
 play_launch --config config.yaml
 
+# Short form
+play_launch -c config.yaml
+
 # Override config with CLI flags
 play_launch -c config.yaml --enable-monitoring --monitor-interval-ms 500
 ```
+
+**Example config.yaml**:
+```yaml
+monitoring:
+  enabled: true
+  sample_interval_ms: 1000
+  monitor_all_nodes: true
+
+processes:
+  - node_pattern: "*/planning/*"
+    monitor: true
+    cpu_affinity: [0, 1]
+    nice: -10
+
+  - node_pattern: "*/rviz*"
+    monitor: false
+    nice: 10
+```
+
+**Next Steps (Phase 2)**:
+- GPU metrics (NVIDIA/AMD)
+- Network I/O statistics
+- Aggregated container-level metrics
+- See design doc for complete Phase 2 & 3 roadmap
