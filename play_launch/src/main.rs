@@ -254,19 +254,14 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         .into_iter()
         .map(|future| future.boxed());
 
-    // Initialize component loader if using service-based loading
-    let component_loader = if opts.load_method == crate::options::LoadMethod::Service {
-        info!("Initializing component loader for service-based node loading");
-        match crate::component_loader::start_component_loader_thread() {
-            Ok(loader) => Some(loader),
-            Err(e) => {
-                error!("Failed to initialize component loader: {}", e);
-                error!("Falling back to subprocess method");
-                None
-            }
+    // Initialize component loader for service-based loading
+    info!("Initializing component loader for service-based node loading");
+    let component_loader = match crate::component_loader::start_component_loader_thread() {
+        Ok(loader) => Some(loader),
+        Err(e) => {
+            error!("Failed to initialize component loader: {}", e);
+            None
         }
-    } else {
-        None
     };
 
     // Create composable node execution configuration
@@ -287,7 +282,6 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         } else {
             None
         },
-        load_method: opts.load_method,
         component_loader,
     };
 

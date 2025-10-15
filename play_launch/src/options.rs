@@ -1,14 +1,5 @@
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use std::path::PathBuf;
-
-/// Method for loading composable nodes into containers
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum LoadMethod {
-    /// Use ROS service calls (faster, eliminates subprocess overhead)
-    Service,
-    /// Use `ros2 component load` subprocess (legacy method)
-    Subprocess,
-}
 
 #[derive(Parser)]
 pub struct Options {
@@ -53,9 +44,4 @@ pub struct Options {
     /// Only used with --wait-for-service-ready.
     #[clap(long, default_value = "500")]
     pub service_poll_interval_ms: u64,
-
-    /// Method for loading composable nodes into containers.
-    /// 'service' uses direct ROS service calls (faster), 'subprocess' uses ros2 CLI (legacy).
-    #[clap(long, value_enum, default_value = "subprocess")]
-    pub load_method: LoadMethod,
 }
