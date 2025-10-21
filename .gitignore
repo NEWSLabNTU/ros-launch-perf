@@ -20,5 +20,9 @@ wheels/
 play_log/
 
 # Added by cargo
-
 /target
+
+# Created by colcon build
+/build/
+/install/
+/log/

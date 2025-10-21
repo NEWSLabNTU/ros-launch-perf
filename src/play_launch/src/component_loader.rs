@@ -11,7 +11,7 @@ use crate::composition_interfaces::LoadNodeResponse;
 use eyre::{Context as _, Result};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Handle to the component loader background thread
 #[derive(Clone)]
@@ -236,6 +236,13 @@ fn call_component_load_subprocess(
         "Executing: ros2 component load {} {} {}",
         container_name, package, plugin
     );
+
+    // Debug: Check if AMENT_PREFIX_PATH is set
+    if let Ok(ament_path) = std::env::var("AMENT_PREFIX_PATH") {
+        eprintln!("DEBUG: AMENT_PREFIX_PATH = {}", ament_path.chars().take(200).collect::<String>());
+    } else {
+        eprintln!("WARNING: AMENT_PREFIX_PATH is not set!");
+    }
 
     let mut cmd = Command::new("ros2");
     cmd.args(&args)

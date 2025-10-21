@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "src/play_launch",
+]
+resolver = "2"

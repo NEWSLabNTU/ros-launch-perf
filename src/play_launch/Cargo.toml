@@ -20,7 +20,8 @@ itertools = "0.13.0"
 libc = "0.2"
 num_cpus = "1.16"
 nvml-wrapper = "0.10"
-rclrs = "0.5.1"
+rclrs = { version = "*" }
+rosidl_runtime_rs = { version = "*" }
 rayon = "1.10.0"
 serde = { version = "1.0.209", features = ["derive"] }
 serde_json = "1.0.127"

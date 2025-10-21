@@ -1,101 +1,108 @@
-SHELL := bash
+COLCON_BUILD_FLAGS := --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+LOG_DIR := build_logs
 
-.DEFAULT_GOAL := help
+.PHONY: default
+default: help
 
 .PHONY: help
-help:  ## Show this help message
-	@echo "Available targets:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+help:
+	@echo "ROS Launch Perf - 4-Stage Build System"
+	@echo ""
+	@echo "Build Commands:"
+	@echo "  make build                  - Build entire project (all 4 stages)"
+	@echo "  make build_ros2_rust        - Stage 1: Build ROS2 Rust base packages"
+	@echo "  make build_interface        - Stage 2: Build ROS interface packages"
+	@echo "  make build_dump_launch      - Stage 3: Build dump_launch Python package"
+	@echo "  make build_play_launch      - Stage 4: Build play_launch Rust package"
+	@echo ""
+	@echo "Installation:"
+	@echo "  make install                - Install binaries to ~/.cargo/bin"
+	@echo "  make uninstall              - Remove installed binaries"
+	@echo ""
+	@echo "Development:"
+	@echo "  make clean                  - Clean all build artifacts"
+	@echo "  make test                   - Run all tests"
+	@echo "  make format                 - Format code"
+	@echo ""
+	@echo "ROS Workspace Setup:"
+	@echo "  make prepare                - Install ROS dependencies with rosdep"
+	@echo ""
+
+.PHONY: prepare
+prepare:
+	@echo "Installing ROS dependencies with rosdep..."
+	@. /opt/ros/humble/setup.sh && \
+	rosdep update && \
+	rosdep install --from-paths src --ignore-src -r -y
 
 .PHONY: build
-build:  ## Build both dump_launch and play_launch packages
-	cd dump_launch && uv sync && uv build
-	cd play_launch && cargo build --release
+build: build_ros2_rust build_interface build_dump_launch build_play_launch
 
-.PHONY: clean
-clean:  ## Clean build artifacts
-	rm -rf dump_launch/dist
-	cd play_launch && cargo clean
+.PHONY: build_ros2_rust
+build_ros2_rust:
+	@echo "Stage 1: Building ROS2 Rust base packages... (log: $(LOG_DIR)/ros2_rust.log)"
+	@mkdir -p $(LOG_DIR)
+	@. /opt/ros/humble/setup.sh && \
+	export RUST_LOG=info && \
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/ros2_rust --base-paths src/interface/ros2-rust 2>&1 | tee $(LOG_DIR)/ros2_rust.log
 
-.PHONY: setcap
-setcap:  ## Apply CAP_SYS_NICE capability to play_launch binary (requires sudo)
-	@echo "Applying CAP_SYS_NICE capability to play_launch..."
-	sudo setcap 'cap_sys_nice+ep' play_launch/target/release/play_launch
-	@echo "Verifying capability:"
-	@getcap play_launch/target/release/play_launch
+.PHONY: build_interface
+build_interface:
+	@echo "Stage 2: Building interface packages... (log: $(LOG_DIR)/interface.log)"
+	@mkdir -p $(LOG_DIR)
+	@. install/setup.sh && \
+	export RUST_LOG=info && \
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/interface/ros2 2>&1 | tee $(LOG_DIR)/interface.log
+
+.PHONY: build_dump_launch
+build_dump_launch:
+	@echo "Stage 3: Building dump_launch... (log: $(LOG_DIR)/dump_launch.log)"
+	@mkdir -p $(LOG_DIR)
+	@. install/setup.sh && \
+	export RUST_LOG=info && \
+	colcon build $(COLCON_BUILD_FLAGS) --packages-select dump_launch 2>&1 | tee $(LOG_DIR)/dump_launch.log
+
+.PHONY: build_play_launch
+build_play_launch:
+	@echo "Stage 4: Building play_launch... (log: $(LOG_DIR)/play_launch.log)"
+	@mkdir -p $(LOG_DIR)
+	@. install/setup.sh && \
+	export RUST_LOG=info && \
+	colcon build $(COLCON_BUILD_FLAGS) --packages-select play_launch 2>&1 | tee $(LOG_DIR)/play_launch.log
 
 .PHONY: install
-install: build  ## Install both packages
-	pip install --force-reinstall dump_launch/dist/dump_launch-0.1.0-py3-none-any.whl
-	cargo install --path play_launch
-	@echo "Applying CAP_SYS_NICE capability to installed binary..."
-	@sudo setcap 'cap_sys_nice+ep' ~/.cargo/bin/play_launch || echo "Warning: Failed to apply capability (may require sudo)"
-	@echo "Capability applied. Verify with: getcap ~/.cargo/bin/play_launch"
-
-.PHONY: debian
-debian:  ## Build Debian package
-	cargo deb
+install: build
+	@echo "Installing binaries to ~/.cargo/bin..."
+	@mkdir -p ~/.cargo/bin
+	@cp install/play_launch/lib/play_launch/play_launch ~/.cargo/bin/
+	@cp install/dump_launch/lib/dump_launch/dump_launch ~/.cargo/bin/
+	@echo "Installation complete!"
+	@echo "  dump_launch -> ~/.cargo/bin/dump_launch"
+	@echo "  play_launch -> ~/.cargo/bin/play_launch"
 
 .PHONY: uninstall
-uninstall:  ## Uninstall both packages
-	pip uninstall -y dump_launch
-	cargo uninstall play_launch
+uninstall:
+	@echo "Removing installed binaries..."
+	@rm -f ~/.cargo/bin/dump_launch ~/.cargo/bin/play_launch
+	@echo "Uninstallation complete!"
 
-.PHONY: profile
-profile:  ## Profile resource usage (requires procpath)
-	procpath record -p $(cat $(find play_log/node -name pid) | tr '\n' ',') -d profiling.sqlite -i 0.1
-
-.PHONY: plot
-plot:  ## Generate profiling plots
-	mkdir plot
-
-	procpath plot -d profiling.sqlite -q cpu -p $(cat $(find play_log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/cpu-all.svg
-	procpath plot -d profiling.sqlite -q rss -p $(cat $(find play_log/node -name pid | grep -v rviz) | tr '\n' ',' | head -c -1) -f plot/rss-all.svg
-
-	cat $(find play_log/node -name pid | grep -v rviz) | \
-	while read p; do; \
-	    echo procpath plot -d profiling.sqlite -q cpu -q rss -p $p -f plot/$p.svg; \
-	done | \
-	parallel -j0 --tty
-
-.PHONY: format
-format:  ## Format both Rust and Python code
-	cd play_launch && cargo +nightly fmt
-	cd dump_launch && uv run ruff format
-
-.PHONY: lint
-lint:  ## Lint both Rust and Python code
-	cd play_launch && cargo clippy -- -D warnings
-	cd dump_launch && uv run ruff check
+.PHONY: clean
+clean:
+	@echo "Cleaning build artifacts..."
+	@rm -rf build install log $(LOG_DIR)
+	@echo "Clean complete!"
 
 .PHONY: test
-test: test-python test-rust  ## Run all tests
+test:
+	@echo "Running tests..."
+	@. install/setup.sh && \
+	colcon test --packages-select dump_launch play_launch && \
+	colcon test-result --all --verbose
 
-.PHONY: test-python
-test-python:  ## Run Python tests
-	cd dump_launch && uv run pytest -v
-
-.PHONY: test-rust
-test-rust:  ## Run Rust tests
-	cd play_launch && cargo test
-
-.PHONY: test-coverage
-test-coverage:  ## Generate test coverage reports
-	@echo "==> Python coverage:"
-	@cd dump_launch && uv run pytest --cov --cov-report=term-missing
-	@echo ""
-	@echo "==> Rust coverage:"
-	@cd play_launch && cargo test
-
-.PHONY: test-unit
-test-unit:  ## Run unit tests only
-	@echo "==> Python unit tests:"
-	@cd dump_launch && uv run pytest -v -m unit
-	@echo ""
-	@echo "==> Rust unit tests:"
-	@cd play_launch && cargo test
-
-.PHONY: test-integration
-test-integration:  ## Run integration tests only
-	@echo "==> Python integration tests:"
-	@cd dump_launch && uv run pytest -v -m integration
+.PHONY: format
+format:
+	@echo "Formatting Rust code..."
+	@cd src/play_launch && cargo fmt
+	@echo "Formatting Python code..."
+	@find src/dump_launch -name "*.py" -type f -not -path "*/test/*" | xargs -r python3 -m black --quiet 2>/dev/null || true
+	@find src/dump_launch -name "*.py" -type f -not -path "*/test/*" | xargs -r python3 -m isort --quiet 2>/dev/null || true

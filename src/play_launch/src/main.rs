@@ -119,6 +119,13 @@ fn main() -> eyre::Result<()> {
     // install global collector configured based on RUST_LOG env var.
     tracing_subscriber::fmt::init();
 
+    // Debug: Check AMENT_PREFIX_PATH at startup
+    if let Ok(ament_path) = std::env::var("AMENT_PREFIX_PATH") {
+        eprintln!("MAIN: AMENT_PREFIX_PATH first 200 chars: {}", ament_path.chars().take(200).collect::<String>());
+    } else {
+        eprintln!("MAIN: WARNING - AMENT_PREFIX_PATH NOT SET!");
+    }
+
     let opts = Options::parse();
 
     if opts.print_shell {
