@@ -42,8 +42,8 @@ play_launch
 
 **CSV Format:** One file per monitored process at `play_log/<timestamp>/metrics/<process_name>.csv`
 ```csv
-timestamp,pid,cpu_percent,rss_bytes,vms_bytes,io_read_bytes,io_write_bytes,state,num_threads,num_fds
-2025-10-15T08:00:00.000Z,12345,15.3,104857600,524288000,1048576,524288,Running,8,42
+timestamp,pid,cpu_percent,cpu_user_secs,rss_bytes,vms_bytes,io_read_bytes,io_write_bytes,total_read_bytes,total_write_bytes,total_read_rate_bps,total_write_rate_bps,state,num_threads,num_fds,num_processes,gpu_memory_bytes,gpu_utilization_percent,gpu_memory_utilization_percent,gpu_temperature_celsius,gpu_power_milliwatts,gpu_graphics_clock_mhz,gpu_memory_clock_mhz,tcp_connections,udp_connections
+2025-10-15T08:00:00.000Z,12345,15.3,120,104857600,524288000,1048576,524288,5242880,2621440,512000.00,256000.00,Running,8,42,1,134217728,75,50,65,150000,1500,5001,4,2
 ```
 
 **Container Mapping:** Separate file lists composable nodes per container (see containers.txt in visualization outputs)
@@ -202,7 +202,11 @@ processes:
 - **Solution:** Monitor containers as whole processes, maintain node-to-container mapping
 
 **Known Limitations:**
-- Negative nice values require CAP_SYS_NICE capability (use `make setcap` to enable)
+- **CAP_SYS_NICE + LD_LIBRARY_PATH incompatibility**: Binaries with file capabilities ignore LD_LIBRARY_PATH for security. This prevents using negative nice values when ROS libraries are loaded via LD_LIBRARY_PATH. Workarounds:
+  - Run with sudo (not recommended)
+  - Build play_launch with rpath to ROS libraries
+  - Install ROS libraries in standard system paths
+  - Use positive nice values only (no capability required)
 - GPU monitoring requires NVIDIA drivers and NVML library (gracefully disabled if unavailable)
 - GPU metrics only available for NVIDIA GPUs (AMD support planned for future)
 - Thread counting limited for Python wrapper processes (sysinfo limitation)
@@ -261,11 +265,31 @@ processes:
 - ✅ Cargo clippy passes with no warnings
 - ✅ Type complexity warning resolved with GpuMetricsTuple alias
 
-**2.2 Network I/O**
-- [ ] Parse `/proc/<pid>/net/dev` for network statistics
-- [ ] Collect TCP/UDP connection counts
-- [ ] Track bytes sent/received per process
-- [ ] Add network metrics to CSV format
+**2.2 I/O Rates and Network Metrics** ✅ COMPLETED
+- [x] Parse `/proc/<pid>/io` for total I/O bytes (rchar/wchar including network)
+- [x] Collect TCP/UDP connection counts from `/proc/<pid>/net/{tcp,udp}` files
+- [x] Implement previous sample tracking for rate calculation
+- [x] Calculate I/O rates (bytes/sec) from cumulative rchar/wchar counters
+- [x] Add 4 new CSV columns: `total_read_bytes`, `total_write_bytes`, `total_read_rate_bps`, `total_write_rate_bps`
+- [x] Add 2 network connection columns: `tcp_connections`, `udp_connections`
+
+**Implementation:** Direct parsing of `/proc/[pid]/io` for rchar/wchar fields
+
+**Key Design Decisions:**
+- **Total I/O vs Disk I/O:** sysinfo's `disk_usage()` returns only disk I/O (read_bytes/write_bytes from /proc), which excludes network, pipes, etc. To get comprehensive I/O including network, we parse rchar/wchar directly from `/proc/[pid]/io`.
+- **Rate Calculation:** Store previous sample (timestamp, rchar, wchar) per PID, calculate rate as `(current - previous) / time_diff`. First sample has no rate (None).
+- **Network Connections:** Count active TCP/UDP connections by parsing `/proc/[pid]/net/{tcp,tcp6,udp,udp6}` files (line count minus header).
+
+**Files Modified:**
+- `play_launch/src/resource_monitor.rs`: Added PreviousSample struct, parse_proc_io() method, rate calculation logic, extended CSV format
+
+**CSV Columns Added:**
+- `total_read_bytes`: rchar from /proc/[pid]/io (cumulative, includes all I/O)
+- `total_write_bytes`: wchar from /proc/[pid]/io (cumulative, includes all I/O)
+- `total_read_rate_bps`: Calculated read rate in bytes/sec (empty on first sample)
+- `total_write_rate_bps`: Calculated write rate in bytes/sec (empty on first sample)
+- `tcp_connections`: Active TCP connections (IPv4 + IPv6)
+- `udp_connections`: Active UDP connections (IPv4 + IPv6)
 
 **2.3 System-Level Aggregation**
 - [ ] Calculate system-wide resource totals
@@ -281,9 +305,15 @@ processes:
 - [x] GPU metrics collected via Device::running_compute_processes()
 - [x] CSV format extended with 7 GPU columns
 - [x] Multi-GPU enumeration implemented (device_count loop)
-- [ ] CAP_SYS_NICE tested with actual negative nice values (requires GPU hardware)
+- [x] I/O rate calculation from rchar/wchar cumulative counters
+- [x] TCP/UDP connection counting via /proc files
+- [x] Previous sample tracking for rate calculation
+- [x] CSV format extended with 6 I/O and network columns
+- [x] I/O rates validated in real-world Autoware test (61 processes monitored, rates correctly calculated)
+- [x] Network connection tracking validated (TCP/UDP counts change over time)
+- [x] GPU fail-soft behavior validated (graceful degradation when NVML unavailable)
+- [ ] CAP_SYS_NICE tested with actual negative nice values (blocked by LD_LIBRARY_PATH + capability issue)
 - [ ] GPU metrics validated against nvidia-smi output (requires GPU hardware)
-- [ ] Network bytes monotonically increasing (future work)
 - [ ] System-wide totals match sum of all monitored processes (future work)
 
 ### Phase 3: Visualization ✅ PARTIALLY COMPLETED
