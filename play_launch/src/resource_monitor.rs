@@ -42,9 +42,17 @@ pub struct ResourceMetrics {
     pub rss_bytes: u64, // Resident Set Size
     pub vms_bytes: u64, // Virtual Memory Size
 
-    // I/O metrics
+    // I/O metrics (disk only - from sysinfo)
     pub io_read_bytes: u64,
     pub io_write_bytes: u64,
+
+    // Total I/O metrics (all I/O including network - from /proc/[pid]/io)
+    pub total_read_bytes: u64,  // rchar field
+    pub total_write_bytes: u64, // wchar field
+
+    // I/O rates (bytes per second, calculated from previous sample)
+    pub total_read_rate_bps: Option<f64>,
+    pub total_write_rate_bps: Option<f64>,
 
     // Process info
     pub state: ProcessState,
@@ -60,6 +68,10 @@ pub struct ResourceMetrics {
     pub gpu_power_milliwatts: Option<u32>,
     pub gpu_graphics_clock_mhz: Option<u32>,
     pub gpu_memory_clock_mhz: Option<u32>,
+
+    // Network metrics (Linux-specific, counts of active connections)
+    pub tcp_connections: u32,
+    pub udp_connections: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -94,6 +106,14 @@ pub struct MonitorConfig {
     pub log_dir: PathBuf,
 }
 
+/// Previous sample for rate calculation
+#[derive(Debug, Clone)]
+struct PreviousSample {
+    timestamp: SystemTime,
+    total_read_bytes: u64,
+    total_write_bytes: u64,
+}
+
 /// Resource monitor with sysinfo and NVML integration
 pub struct ResourceMonitor {
     system: System,
@@ -101,6 +121,25 @@ pub struct ResourceMonitor {
     csv_writers: HashMap<String, Writer<File>>,
     nvml: Option<Nvml>,
     gpu_device_count: u32,
+    previous_samples: HashMap<u32, PreviousSample>, // PID -> previous I/O sample
+}
+
+/// Count network connections from /proc/<pid>/net/{tcp,udp} files
+/// Each line (except header) represents a connection
+#[cfg(target_os = "linux")]
+fn count_connections_in_file(path: &str) -> u32 {
+    match std::fs::read_to_string(path) {
+        Ok(content) => {
+            // Count lines minus 1 for header
+            let line_count = content.lines().count();
+            if line_count > 0 {
+                (line_count - 1) as u32
+            } else {
+                0
+            }
+        }
+        Err(_) => 0, // File may not exist if no connections
+    }
 }
 
 /// Find all subprocess PIDs recursively (Linux only)
@@ -158,6 +197,7 @@ impl ResourceMonitor {
             csv_writers: HashMap::new(),
             nvml,
             gpu_device_count,
+            previous_samples: HashMap::new(),
         })
     }
 
@@ -229,8 +269,48 @@ impl ResourceMonitor {
             gpu_memory_clock_mhz,
         ) = self.collect_gpu_metrics(pid)?;
 
+        // Collect network connection counts
+        let (tcp_connections, udp_connections) = self.collect_network_connections(pid);
+
+        // Parse /proc/[pid]/io for total I/O (including network)
+        let (total_read_bytes, total_write_bytes) = self.parse_proc_io(pid).unwrap_or((0, 0));
+
+        // Calculate I/O rates from previous sample
+        let current_time = SystemTime::now();
+        let (total_read_rate_bps, total_write_rate_bps) = if let Some(prev) =
+            self.previous_samples.get(&pid)
+        {
+            let time_diff = current_time
+                .duration_since(prev.timestamp)
+                .unwrap_or(Duration::from_secs(0))
+                .as_secs_f64();
+
+            if time_diff > 0.0 {
+                let read_rate =
+                    (total_read_bytes.saturating_sub(prev.total_read_bytes)) as f64 / time_diff;
+                let write_rate =
+                    (total_write_bytes.saturating_sub(prev.total_write_bytes)) as f64 / time_diff;
+                (Some(read_rate), Some(write_rate))
+            } else {
+                (None, None)
+            }
+        } else {
+            // No previous sample, can't calculate rate
+            (None, None)
+        };
+
+        // Store current sample for next iteration
+        self.previous_samples.insert(
+            pid,
+            PreviousSample {
+                timestamp: current_time,
+                total_read_bytes,
+                total_write_bytes,
+            },
+        );
+
         Ok(ResourceMetrics {
-            timestamp: SystemTime::now(),
+            timestamp: current_time,
             pid,
             node_name: node_name.to_string(),
             cpu_percent,
@@ -239,6 +319,10 @@ impl ResourceMonitor {
             vms_bytes,
             io_read_bytes,
             io_write_bytes,
+            total_read_bytes,
+            total_write_bytes,
+            total_read_rate_bps,
+            total_write_rate_bps,
             state,
             num_threads,
             num_fds,
@@ -250,6 +334,8 @@ impl ResourceMonitor {
             gpu_power_milliwatts,
             gpu_graphics_clock_mhz,
             gpu_memory_clock_mhz,
+            tcp_connections,
+            udp_connections,
         })
     }
 
@@ -306,6 +392,57 @@ impl ResourceMonitor {
         Ok((None, None, None, None, None, None, None))
     }
 
+    /// Count TCP and UDP connections for a process (Linux-specific)
+    #[cfg(target_os = "linux")]
+    fn collect_network_connections(&self, pid: u32) -> (u32, u32) {
+        let tcp_count = count_connections_in_file(&format!("/proc/{}/net/tcp", pid))
+            + count_connections_in_file(&format!("/proc/{}/net/tcp6", pid));
+        let udp_count = count_connections_in_file(&format!("/proc/{}/net/udp", pid))
+            + count_connections_in_file(&format!("/proc/{}/net/udp6", pid));
+
+        (tcp_count, udp_count)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn collect_network_connections(&self, _pid: u32) -> (u32, u32) {
+        (0, 0)
+    }
+
+    /// Parse /proc/[pid]/io for total I/O bytes (rchar/wchar) including network
+    /// Returns (rchar, wchar) which are cumulative byte counters
+    #[cfg(target_os = "linux")]
+    fn parse_proc_io(&self, pid: u32) -> Result<(u64, u64)> {
+        let io_path = format!("/proc/{}/io", pid);
+        let content = std::fs::read_to_string(&io_path)
+            .wrap_err_with(|| format!("Failed to read {}", io_path))?;
+
+        let mut rchar = 0u64;
+        let mut wchar = 0u64;
+
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split(':').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+
+            let key = parts[0].trim();
+            let value = parts[1].trim().parse::<u64>().unwrap_or(0);
+
+            match key {
+                "rchar" => rchar = value,
+                "wchar" => wchar = value,
+                _ => {}
+            }
+        }
+
+        Ok((rchar, wchar))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn parse_proc_io(&self, _pid: u32) -> Result<(u64, u64)> {
+        Ok((0, 0))
+    }
+
     fn write_csv(&mut self, node_name: &str, metrics: &ResourceMetrics) -> Result<()> {
         // Get or create CSV writer for this node
         if !self.csv_writers.contains_key(node_name) {
@@ -333,6 +470,10 @@ impl ResourceMonitor {
                     "vms_bytes",
                     "io_read_bytes",
                     "io_write_bytes",
+                    "total_read_bytes",
+                    "total_write_bytes",
+                    "total_read_rate_bps",
+                    "total_write_rate_bps",
                     "state",
                     "num_threads",
                     "num_fds",
@@ -344,6 +485,8 @@ impl ResourceMonitor {
                     "gpu_power_milliwatts",
                     "gpu_graphics_clock_mhz",
                     "gpu_memory_clock_mhz",
+                    "tcp_connections",
+                    "udp_connections",
                 ])
                 .wrap_err("Failed to write CSV header")?;
 
@@ -370,6 +513,16 @@ impl ResourceMonitor {
                 metrics.vms_bytes.to_string(),
                 metrics.io_read_bytes.to_string(),
                 metrics.io_write_bytes.to_string(),
+                metrics.total_read_bytes.to_string(),
+                metrics.total_write_bytes.to_string(),
+                metrics
+                    .total_read_rate_bps
+                    .map(|v| format!("{:.2}", v))
+                    .unwrap_or_default(),
+                metrics
+                    .total_write_rate_bps
+                    .map(|v| format!("{:.2}", v))
+                    .unwrap_or_default(),
                 metrics.state.as_str().to_string(),
                 metrics.num_threads.to_string(),
                 metrics.num_fds.to_string(),
@@ -402,6 +555,8 @@ impl ResourceMonitor {
                     .gpu_memory_clock_mhz
                     .map(|v| v.to_string())
                     .unwrap_or_default(),
+                metrics.tcp_connections.to_string(),
+                metrics.udp_connections.to_string(),
             ])
             .wrap_err_with(|| format!("Failed to write CSV row for {}", node_name))?;
 
