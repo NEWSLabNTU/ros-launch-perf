@@ -140,13 +140,13 @@ play_launch accepts these options (play_launch/src/options.rs):
 - `--input-file <PATH>`: Input record file (default: `record.json`)
 - `--print-shell`: Generate shell script instead of executing
 
-### Runtime Configuration (Future)
+### Runtime Configuration
 - `--config <PATH>` (short: `-c`): Runtime configuration file (YAML)
   - Resource monitoring settings
   - Per-process CPU affinity and nice values
   - See `docs/resource-monitoring-design.md` for details
 
-### Resource Monitoring (Future)
+### Resource Monitoring
 - `--enable-monitoring`: Enable resource monitoring for all nodes (overrides config file)
 - `--monitor-interval-ms <MS>`: Sampling interval in milliseconds (overrides config file)
 
@@ -181,9 +181,10 @@ play_log/
 │   │   └── <container>/<package>/<plugin>/
 │   │       ├── service_response.<round>  # LoadNode service response
 │   │       └── status                    # final status (0=success, 1=failure)
-│   └── metrics/           # Resource monitoring (future)
-│       └── <namespace>/
-│           └── <node_name>.csv  # Per-node resource metrics
+│   └── metrics/           # Resource monitoring (when enabled)
+│       └── <node_name>.csv  # Per-node/container resource metrics
+│           # Columns: timestamp, pid, cpu_percent, cpu_user_secs, rss_bytes, vms_bytes,
+│           #          io_read_bytes, io_write_bytes, state, num_threads, num_fds, num_processes
 ```
 
 ## Dependencies
@@ -249,27 +250,29 @@ Successfully tested with Autoware planning_simulator (52 composable nodes, 15 co
 
 See `docs/resource-monitoring-design.md` for comprehensive design document.
 
-**Status**: Phase 1 implementation complete and tested ✓
+**Status**: Phase 1 (Phase 1a + Phase 1b) implementation complete and tested ✓
 
 **Implemented Features**:
-- ✅ Per-node resource monitoring (CPU, memory, I/O, threads, FDs)
-- ✅ CSV logging for visualization and analysis
-- ✅ Process control infrastructure (CPU affinity and nice values)
-- ✅ Configuration via YAML file
+- ✅ Per-node resource monitoring (CPU, memory, I/O, threads, FDs, process state)
+- ✅ Container monitoring with PID registration and aggregated metrics
+- ✅ CSV logging for visualization and analysis (one file per node/container)
+- ✅ Process control: CPU affinity and nice values for containers and standalone composable nodes
+- ✅ Configuration via YAML file with glob pattern matching
 - ✅ CLI flags: `--config` / `-c`, `--enable-monitoring`, `--monitor-interval-ms`
-- ✅ sysinfo 0.32 integration for cross-platform metrics
-- ✅ Background monitoring thread with configurable interval
+- ✅ sysinfo 0.32 integration with optimized process refresh
+- ✅ Background monitoring thread with configurable interval (default: 1000ms)
 - ✅ Zero overhead when disabled (default)
 
 **Implementation Details**:
-- **config.rs**: Runtime configuration with YAML parsing, CPU affinity & nice value support
-- **resource_monitor.rs**: Monitoring thread using sysinfo, CSV writing per node
-- **Integration**: Monitoring thread spawns in main.rs if enabled
-- **Tests**: 21 unit tests pass, all lint checks pass
-- **Coverage**: Python tests now have proper coverage reporting
-
-**Known Limitation**:
-Process registration and control (CPU affinity/nice) are implemented but not yet connected to `spawn_nodes()`. This requires modifying the spawn_nodes signature to accept runtime_config and process_registry. The infrastructure is ready for integration when needed.
+- **config.rs**: Runtime configuration with YAML parsing, CPU affinity & nice value support, glob pattern matching
+- **resource_monitor.rs**: Monitoring thread using sysinfo with targeted process refresh, CSV writing per node
+  - Uses `System::new()` instead of `new_all()` to avoid loading all system processes
+  - Refreshes only monitored PIDs using `ProcessesToUpdate::Some(&pids)` for efficiency
+- **execution.rs**: Process control integration for containers (lines 320-333) and standalone composable nodes (lines 553-566)
+- **main.rs**: Monitoring thread initialization and config passing to execution (line 324)
+- **Integration**: Full pipeline from config → execution → monitoring
+- **Tests**: 21 unit tests pass, all lint checks pass, tested with Autoware (15 containers, 46 nodes)
+- **Coverage**: Python tests have proper coverage reporting
 
 **Example usage**:
 ```bash
@@ -291,18 +294,33 @@ play_launch -c config.yaml --enable-monitoring --monitor-interval-ms 500
 monitoring:
   enabled: true
   sample_interval_ms: 1000
-  monitor_all_nodes: true
 
 processes:
-  - node_pattern: "*/planning/*"
+  # Apply process control to all component containers
+  - node_pattern: "NODE 'rclcpp_components/component_container*"
     monitor: true
     cpu_affinity: [0, 1]
-    nice: -10
+    nice: 5
 
-  - node_pattern: "*/rviz*"
+  # Specific container with higher priority
+  - node_pattern: "NODE 'rclcpp_components/component_container_mt-25'"
+    monitor: true
+    cpu_affinity: [0, 1]
+    nice: -5  # Negative nice requires root privileges
+
+  # Pattern matching for specific nodes
+  - node_pattern: "NODE 'rviz2/rviz2*"
     monitor: false
     nice: 10
 ```
+
+**Important Notes**:
+- Negative nice values (-20 to -1, higher priority) require root privileges
+- Positive nice values (1 to 19, lower priority) can be set by any user
+- CPU affinity is an array of core IDs (e.g., `[0, 1]` pins to cores 0 and 1)
+- Pattern matching uses glob syntax (`*` for wildcards)
+- Node names follow the format: `NODE '<package>/<executable>-<id>'`
+- First matching pattern is applied (order matters)
 
 **Next Steps (Phase 2)**:
 - GPU metrics (NVIDIA/AMD)
