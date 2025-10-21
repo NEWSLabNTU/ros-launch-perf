@@ -7,3 +7,33 @@
 [submodule "src/ros2_rust/rosidl_runtime_rs"]
 	path = src/ros2_rust/rosidl_runtime_rs
 	url = https://github.com/ros2-rust/rosidl_runtime_rs.git
+[submodule "src/interface/ros2/common_interfaces"]
+	path = src/interface/ros2/common_interfaces
+	url = https://github.com/ros2/common_interfaces.git
+	branch = humble
+[submodule "src/interface/ros2/example_interfaces"]
+	path = src/interface/ros2/example_interfaces
+	url = https://github.com/ros2/example_interfaces.git
+	branch = humble
+[submodule "src/interface/ros2/rcl_interfaces"]
+	path = src/interface/ros2/rcl_interfaces
+	url = https://github.com/ros2/rcl_interfaces.git
+	branch = humble
+[submodule "src/interface/ros2/test_interface_files"]
+	path = src/interface/ros2/test_interface_files
+	url = https://github.com/ros2/test_interface_files.git
+	branch = humble
+[submodule "src/interface/ros2/rosidl_defaults"]
+	path = src/interface/ros2/rosidl_defaults
+	url = https://github.com/ros2/rosidl_defaults.git
+	branch = humble
+[submodule "src/interface/ros2/unique_identifier_msgs"]
+	path = src/interface/ros2/unique_identifier_msgs
+	url = https://github.com/ros2/unique_identifier_msgs.git
+	branch = humble
+[submodule "src/interface/ros2-rust/rosidl_rust"]
+	path = src/interface/ros2-rust/rosidl_rust
+	url = https://github.com/ros2-rust/rosidl_rust.git
+[submodule "src/interface/ros2-rust/rosidl_runtime_rs"]
+	path = src/interface/ros2-rust/rosidl_runtime_rs
+	url = https://github.com/ros2-rust/rosidl_runtime_rs.git
