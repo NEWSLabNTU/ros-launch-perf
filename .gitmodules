@@ -1,0 +1,9 @@
+[submodule "src/ros2_rust/ros2_rust"]
+	path = src/ros2_rust/ros2_rust
+	url = https://github.com/ros2-rust/ros2_rust.git
+[submodule "src/ros2_rust/rosidl_rust"]
+	path = src/ros2_rust/rosidl_rust
+	url = https://github.com/ros2-rust/rosidl_rust.git
+[submodule "src/ros2_rust/rosidl_runtime_rs"]
+	path = src/ros2_rust/rosidl_runtime_rs
+	url = https://github.com/ros2-rust/rosidl_runtime_rs.git
