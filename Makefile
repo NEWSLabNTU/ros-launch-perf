@@ -17,10 +17,20 @@ clean:  ## Clean build artifacts
 	rm -rf dump_launch/dist
 	cd play_launch && cargo clean
 
+.PHONY: setcap
+setcap:  ## Apply CAP_SYS_NICE capability to play_launch binary (requires sudo)
+	@echo "Applying CAP_SYS_NICE capability to play_launch..."
+	sudo setcap 'cap_sys_nice+ep' play_launch/target/release/play_launch
+	@echo "Verifying capability:"
+	@getcap play_launch/target/release/play_launch
+
 .PHONY: install
 install: build  ## Install both packages
 	pip install --force-reinstall dump_launch/dist/dump_launch-0.1.0-py3-none-any.whl
 	cargo install --path play_launch
+	@echo "Applying CAP_SYS_NICE capability to installed binary..."
+	@sudo setcap 'cap_sys_nice+ep' ~/.cargo/bin/play_launch || echo "Warning: Failed to apply capability (may require sudo)"
+	@echo "Capability applied. Verify with: getcap ~/.cargo/bin/play_launch"
 
 .PHONY: debian
 debian:  ## Build Debian package
