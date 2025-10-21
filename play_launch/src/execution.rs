@@ -35,6 +35,7 @@ pub struct ComposableNodeExecutionConfig {
     pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
     pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
     pub process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    pub process_configs: Vec<crate::config::ProcessConfig>,
 }
 
 /// The set of node containers and composable nodes belong to the same
@@ -131,7 +132,7 @@ pub fn spawn_or_load_composable_nodes(
         info!("standalone composable node: {}", load_node_contexts.len());
 
         let standalone_composable_node_tasks =
-            spawn_standalone_composable_nodes(load_node_contexts);
+            spawn_standalone_composable_nodes(load_node_contexts, config.process_registry.clone(), config.process_configs);
 
         ComposableNodeTasks::Standalone {
             wait_composable_node_tasks: standalone_composable_node_tasks
@@ -257,6 +258,7 @@ fn build_container_groups(
 fn spawn_node_containers(
     container_groups: HashMap<String, NodeContainerGroup>,
     process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    process_configs: Vec<crate::config::ProcessConfig>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     HashMap<String, ComposableNodeGroup>,
@@ -312,6 +314,21 @@ fn spawn_node_containers(
                         if let Ok(mut reg) = registry.lock() {
                             reg.insert(pid, log_name.clone());
                             debug!("Registered container PID {} for node {}", pid, log_name);
+                        }
+                    }
+
+                    // Apply process control (CPU affinity and nice values)
+                    for config in &process_configs {
+                        if config.matches(&log_name) {
+                            if let Err(e) = config.apply(pid) {
+                                warn!(
+                                    "Failed to apply process control to container {}: {}",
+                                    log_name, e
+                                );
+                            } else {
+                                debug!("Applied process control to container {} (PID {})", log_name, pid);
+                            }
+                            break; // Only apply first matching config
                         }
                     }
                 }
@@ -449,7 +466,7 @@ fn spawn_node_containers_and_load_composable_nodes(
 
     // Spawn node containers in each node container group and get their PIDs
     let (container_tasks, nice_load_node_groups, container_pids) =
-        spawn_node_containers(container_groups, config.process_registry.clone());
+        spawn_node_containers(container_groups, config.process_registry.clone(), config.process_configs.clone());
 
     let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
     let load_node_delay = config.load_node_delay;
@@ -495,6 +512,8 @@ fn spawn_node_containers_and_load_composable_nodes(
 /// Spawn standalone composable nodes.
 fn spawn_standalone_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    process_configs: Vec<crate::config::ProcessConfig>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     load_node_contexts
         .into_iter()
@@ -520,13 +539,49 @@ fn spawn_standalone_composable_nodes(
                     return None;
                 }
             };
+
+            // Register PID for monitoring and apply process control
+            if let Some(pid) = child.id() {
+                // Register PID for monitoring
+                if let Some(ref registry) = process_registry {
+                    if let Ok(mut reg) = registry.lock() {
+                        reg.insert(pid, log_name.clone());
+                        debug!("Registered standalone composable node PID {} for {}", pid, log_name);
+                    }
+                }
+
+                // Apply process control (CPU affinity and nice values)
+                for config in &process_configs {
+                    if config.matches(log_name) {
+                        if let Err(e) = config.apply(pid) {
+                            warn!(
+                                "Failed to apply process control to standalone composable node {}: {}",
+                                log_name, e
+                            );
+                        } else {
+                            debug!("Applied process control to standalone composable node {} (PID {})", log_name, pid);
+                        }
+                        break; // Only apply first matching config
+                    }
+                }
+            }
+
+            let registry_clone = process_registry.clone();
+            let log_name_clone = log_name.clone();
             let task = async move {
                 let ComposableNodeContext {
                     log_name,
                     output_dir,
                     ..
                 } = &context;
-                wait_for_node(log_name, output_dir, child).await
+                let result = wait_for_node(log_name, output_dir, child).await;
+                // Unregister PID when process exits
+                if let Some(registry) = registry_clone {
+                    if let Ok(mut reg) = registry.lock() {
+                        reg.retain(|_, name| name != &log_name_clone);
+                    }
+                }
+                result
             };
             Some(task)
         })

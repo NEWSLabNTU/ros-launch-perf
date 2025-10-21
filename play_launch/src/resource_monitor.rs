@@ -110,8 +110,10 @@ fn find_subprocess_pids(_parent_pid: u32) -> Vec<u32> {
 
 impl ResourceMonitor {
     pub fn new(log_dir: PathBuf) -> Result<Self> {
+        // Use System::new() instead of new_all() to avoid loading everything upfront
+        // We'll refresh only the processes we need in the monitoring loop
         Ok(Self {
-            system: System::new_all(),
+            system: System::new(),
             log_dir,
             csv_writers: HashMap::new(),
         })
@@ -298,13 +300,17 @@ pub fn spawn_monitor_thread(
         );
 
         loop {
-            // Refresh all processes in one call for efficiency
-            // In sysinfo 0.32, we need to specify which processes to update
-            monitor
-                .system
-                .refresh_processes(sysinfo::ProcessesToUpdate::All, false);
-
+            // Get snapshot of current processes to monitor
             let processes = process_registry.lock().unwrap().clone();
+
+            // Refresh only the specific processes we're monitoring, not all system processes
+            // This is much more efficient than refreshing all processes
+            let pids_to_refresh: Vec<Pid> = processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
+            if !pids_to_refresh.is_empty() {
+                monitor
+                    .system
+                    .refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids_to_refresh), true);
+            }
 
             for (pid, node_name) in processes {
                 match monitor.collect_metrics(pid, &node_name) {

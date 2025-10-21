@@ -321,6 +321,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         },
         component_loader,
         process_registry: Some(process_registry.clone()),
+        process_configs: runtime_config.monitoring.process_configs,
     };
 
     // Create the task set to load composable nodes according to user
