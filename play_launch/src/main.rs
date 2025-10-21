@@ -232,6 +232,23 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
 
+    // Initialize NVML for GPU monitoring
+    let nvml = match nvml_wrapper::Nvml::init() {
+        Ok(nvml) => {
+            let device_count = nvml.device_count().unwrap_or(0);
+            info!(
+                "NVML initialized successfully with {} GPU device(s)",
+                device_count
+            );
+            Some(nvml)
+        }
+        Err(e) => {
+            error!("Failed to initialize NVML: {}", e);
+            error!("GPU monitoring will be unavailable. Ensure NVIDIA drivers are installed.");
+            None
+        }
+    };
+
     // Initialize monitoring if enabled
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
     let _monitor_thread = if runtime_config.monitoring.enabled {
@@ -240,7 +257,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
             sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
             log_dir: log_dir.clone(),
         };
-        match spawn_monitor_thread(monitor_config, process_registry.clone()) {
+        match spawn_monitor_thread(monitor_config, process_registry.clone(), nvml) {
             Ok(handle) => {
                 info!(
                     "Resource monitoring enabled (interval: {}ms)",

@@ -131,8 +131,11 @@ pub fn spawn_or_load_composable_nodes(
     if config.standalone_composable_nodes {
         info!("standalone composable node: {}", load_node_contexts.len());
 
-        let standalone_composable_node_tasks =
-            spawn_standalone_composable_nodes(load_node_contexts, config.process_registry.clone(), config.process_configs);
+        let standalone_composable_node_tasks = spawn_standalone_composable_nodes(
+            load_node_contexts,
+            config.process_registry.clone(),
+            config.process_configs,
+        );
 
         ComposableNodeTasks::Standalone {
             wait_composable_node_tasks: standalone_composable_node_tasks
@@ -326,7 +329,10 @@ fn spawn_node_containers(
                                     log_name, e
                                 );
                             } else {
-                                debug!("Applied process control to container {} (PID {})", log_name, pid);
+                                debug!(
+                                    "Applied process control to container {} (PID {})",
+                                    log_name, pid
+                                );
                             }
                             break; // Only apply first matching config
                         }
@@ -465,8 +471,11 @@ fn spawn_node_containers_and_load_composable_nodes(
         build_container_groups(container_names, container_contexts, load_node_contexts);
 
     // Spawn node containers in each node container group and get their PIDs
-    let (container_tasks, nice_load_node_groups, container_pids) =
-        spawn_node_containers(container_groups, config.process_registry.clone(), config.process_configs.clone());
+    let (container_tasks, nice_load_node_groups, container_pids) = spawn_node_containers(
+        container_groups,
+        config.process_registry.clone(),
+        config.process_configs.clone(),
+    );
 
     let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
     let load_node_delay = config.load_node_delay;
@@ -503,7 +512,8 @@ fn spawn_node_containers_and_load_composable_nodes(
         info!("Proceeding to load composable nodes");
 
         // Spawn composable nodes having belonging containers.
-        run_load_composable_node_groups(nice_load_node_groups, spawn_config, &component_loader).await;
+        run_load_composable_node_groups(nice_load_node_groups, spawn_config, &component_loader)
+            .await;
     };
 
     (container_tasks, load_composable_nodes_task)

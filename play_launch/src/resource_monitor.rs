@@ -1,5 +1,9 @@
 use csv::Writer;
 use eyre::{Result, WrapErr};
+use nvml_wrapper::{
+    enum_wrappers::device::{Clock, TemperatureSensor},
+    Nvml,
+};
 use std::{
     collections::HashMap,
     fs::{self, File},
@@ -10,6 +14,17 @@ use std::{
 };
 use sysinfo::{Pid, System};
 use tracing::{debug, warn};
+
+/// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
+type GpuMetricsTuple = (
+    Option<u64>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+    Option<u32>,
+);
 
 /// Resource metrics for a single process at a point in time
 #[derive(Debug, Clone)]
@@ -36,6 +51,15 @@ pub struct ResourceMetrics {
     pub num_threads: u32,
     pub num_fds: u32,       // File descriptors
     pub num_processes: u32, // Number of processes in tree (parent + children)
+
+    // GPU metrics (optional - only populated if GPU monitoring enabled)
+    pub gpu_memory_bytes: Option<u64>,
+    pub gpu_utilization_percent: Option<u32>,
+    pub gpu_memory_utilization_percent: Option<u32>,
+    pub gpu_temperature_celsius: Option<u32>,
+    pub gpu_power_milliwatts: Option<u32>,
+    pub gpu_graphics_clock_mhz: Option<u32>,
+    pub gpu_memory_clock_mhz: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -70,11 +94,13 @@ pub struct MonitorConfig {
     pub log_dir: PathBuf,
 }
 
-/// Resource monitor with sysinfo integration
+/// Resource monitor with sysinfo and NVML integration
 pub struct ResourceMonitor {
     system: System,
     log_dir: PathBuf,
     csv_writers: HashMap<String, Writer<File>>,
+    nvml: Option<Nvml>,
+    gpu_device_count: u32,
 }
 
 /// Find all subprocess PIDs recursively (Linux only)
@@ -109,13 +135,29 @@ fn find_subprocess_pids(_parent_pid: u32) -> Vec<u32> {
 }
 
 impl ResourceMonitor {
-    pub fn new(log_dir: PathBuf) -> Result<Self> {
+    pub fn new(log_dir: PathBuf, nvml: Option<Nvml>) -> Result<Self> {
         // Use System::new() instead of new_all() to avoid loading everything upfront
         // We'll refresh only the processes we need in the monitoring loop
+
+        // Get GPU device count if NVML available
+        let gpu_device_count = if let Some(ref nvml) = nvml {
+            nvml.device_count()
+                .wrap_err("Failed to get GPU device count")?
+        } else {
+            0
+        };
+
+        debug!(
+            "ResourceMonitor initialized with {} GPU devices",
+            gpu_device_count
+        );
+
         Ok(Self {
             system: System::new(),
             log_dir,
             csv_writers: HashMap::new(),
+            nvml,
+            gpu_device_count,
         })
     }
 
@@ -176,6 +218,17 @@ impl ResourceMonitor {
 
         let num_processes = 1 + subprocess_pids.len() as u32;
 
+        // Collect GPU metrics if NVML available
+        let (
+            gpu_memory_bytes,
+            gpu_utilization_percent,
+            gpu_memory_utilization_percent,
+            gpu_temperature_celsius,
+            gpu_power_milliwatts,
+            gpu_graphics_clock_mhz,
+            gpu_memory_clock_mhz,
+        ) = self.collect_gpu_metrics(pid)?;
+
         Ok(ResourceMetrics {
             timestamp: SystemTime::now(),
             pid,
@@ -190,7 +243,67 @@ impl ResourceMonitor {
             num_threads,
             num_fds,
             num_processes,
+            gpu_memory_bytes,
+            gpu_utilization_percent,
+            gpu_memory_utilization_percent,
+            gpu_temperature_celsius,
+            gpu_power_milliwatts,
+            gpu_graphics_clock_mhz,
+            gpu_memory_clock_mhz,
         })
+    }
+
+    fn collect_gpu_metrics(&self, pid: u32) -> Result<GpuMetricsTuple> {
+        let nvml = match &self.nvml {
+            Some(nvml) => nvml,
+            None => {
+                // No NVML, return all None
+                return Ok((None, None, None, None, None, None, None));
+            }
+        };
+
+        // Search all GPU devices for this process
+        for device_index in 0..self.gpu_device_count {
+            let device = nvml
+                .device_by_index(device_index)
+                .wrap_err_with(|| format!("Failed to get GPU device {}", device_index))?;
+
+            // Get running compute processes
+            let processes = device.running_compute_processes().wrap_err_with(|| {
+                format!("Failed to get running processes for GPU {}", device_index)
+            })?;
+
+            // Check if our PID is using this GPU
+            for proc in processes {
+                if proc.pid == pid {
+                    // Found process on this GPU - collect metrics
+                    let utilization = device.utilization_rates().ok();
+                    let temperature = device.temperature(TemperatureSensor::Gpu).ok();
+                    let power = device.power_usage().ok();
+                    let graphics_clock = device.clock_info(Clock::Graphics).ok();
+                    let memory_clock = device.clock_info(Clock::Memory).ok();
+
+                    // Extract GPU memory as u64 from UsedGpuMemory enum
+                    let gpu_mem_bytes = match proc.used_gpu_memory {
+                        nvml_wrapper::enums::device::UsedGpuMemory::Used(bytes) => Some(bytes),
+                        nvml_wrapper::enums::device::UsedGpuMemory::Unavailable => None,
+                    };
+
+                    return Ok((
+                        gpu_mem_bytes,
+                        utilization.as_ref().map(|u| u.gpu),
+                        utilization.as_ref().map(|u| u.memory),
+                        temperature,
+                        power,
+                        graphics_clock,
+                        memory_clock,
+                    ));
+                }
+            }
+        }
+
+        // Process not found on any GPU
+        Ok((None, None, None, None, None, None, None))
     }
 
     fn write_csv(&mut self, node_name: &str, metrics: &ResourceMetrics) -> Result<()> {
@@ -224,6 +337,13 @@ impl ResourceMonitor {
                     "num_threads",
                     "num_fds",
                     "num_processes",
+                    "gpu_memory_bytes",
+                    "gpu_utilization_percent",
+                    "gpu_memory_utilization_percent",
+                    "gpu_temperature_celsius",
+                    "gpu_power_milliwatts",
+                    "gpu_graphics_clock_mhz",
+                    "gpu_memory_clock_mhz",
                 ])
                 .wrap_err("Failed to write CSV header")?;
 
@@ -254,6 +374,34 @@ impl ResourceMonitor {
                 metrics.num_threads.to_string(),
                 metrics.num_fds.to_string(),
                 metrics.num_processes.to_string(),
+                metrics
+                    .gpu_memory_bytes
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_utilization_percent
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_memory_utilization_percent
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_temperature_celsius
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_power_milliwatts
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_graphics_clock_mhz
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                metrics
+                    .gpu_memory_clock_mhz
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
             ])
             .wrap_err_with(|| format!("Failed to write CSV row for {}", node_name))?;
 
@@ -279,13 +427,14 @@ impl ResourceMonitor {
 pub fn spawn_monitor_thread(
     config: MonitorConfig,
     process_registry: Arc<Mutex<HashMap<u32, String>>>,
+    nvml: Option<Nvml>,
 ) -> Result<JoinHandle<()>> {
     if !config.enabled {
         return Err(eyre::eyre!("Monitoring is not enabled"));
     }
 
     let handle = thread::spawn(move || {
-        let mut monitor = match ResourceMonitor::new(config.log_dir.clone()) {
+        let mut monitor = match ResourceMonitor::new(config.log_dir.clone(), nvml) {
             Ok(m) => m,
             Err(e) => {
                 warn!("Failed to create ResourceMonitor: {}", e);
@@ -305,7 +454,8 @@ pub fn spawn_monitor_thread(
 
             // Refresh only the specific processes we're monitoring, not all system processes
             // This is much more efficient than refreshing all processes
-            let pids_to_refresh: Vec<Pid> = processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
+            let pids_to_refresh: Vec<Pid> =
+                processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
             if !pids_to_refresh.is_empty() {
                 monitor
                     .system
