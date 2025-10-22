@@ -57,12 +57,20 @@ cd "$SCRIPT_DIR"
 # Set CycloneDDS configuration
 export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
+echo "Using CycloneDDS configuration: $CYCLONEDDS_URI"
+echo "Verifying configuration file exists..."
+if [ ! -f "$SCRIPT_DIR/cyclonedds.xml" ]; then
+    echo "ERROR: CycloneDDS configuration file not found at $SCRIPT_DIR/cyclonedds.xml"
+    exit 1
+fi
+
 # Dump launch execution
 ros2 run dump_launch dump_launch \
     autoware_launch planning_simulator.launch.xml \
     map_path:="$MAP_PATH"
 
 # Replay with play_launch
+echo "Starting play_launch with CYCLONEDDS_URI=$CYCLONEDDS_URI"
 ros2 run play_launch play_launch \
     --enable-monitoring \
     --monitor-interval-ms 1000 \
