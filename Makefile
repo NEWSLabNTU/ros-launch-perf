@@ -102,7 +102,7 @@ test:
 .PHONY: format
 format:
 	@echo "Formatting Rust code..."
-	@cd src/play_launch && cargo fmt
+	@cd src/play_launch && cargo +nightly fmt
 	@echo "Formatting Python code..."
 	@find src/dump_launch -name "*.py" -type f -not -path "*/test/*" | xargs -r python3 -m black --quiet 2>/dev/null || true
 	@find src/dump_launch -name "*.py" -type f -not -path "*/test/*" | xargs -r python3 -m isort --quiet 2>/dev/null || true
