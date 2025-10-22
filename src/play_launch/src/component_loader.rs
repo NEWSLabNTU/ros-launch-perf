@@ -249,6 +249,13 @@ fn call_component_load_subprocess(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Set process group to isolate child from parent's signal handling
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+
     debug!("About to spawn command");
     let mut child = cmd.spawn().wrap_err_with(|| {
         format!(

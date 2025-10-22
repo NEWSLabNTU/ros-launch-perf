@@ -357,6 +357,14 @@ impl NodeCommandLine {
             .expect("command line must not be empty");
         let mut command = Command::new(program);
         command.args(args);
+
+        // Set process group to isolate child from parent's signal handling
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+
         command
     }
 
