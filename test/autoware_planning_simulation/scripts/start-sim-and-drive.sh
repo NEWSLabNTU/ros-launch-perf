@@ -42,6 +42,9 @@ start_simulator() {
     source setup.bash 2>&1 >/dev/null
     cd "$SCRIPT_DIR"
 
+    # Set CycloneDDS configuration
+    export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
+
     dump_launch \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
@@ -60,6 +63,9 @@ run_test() {
     cd "$AUTOWARE_PATH/install"
     source setup.bash 2>&1 >/dev/null
     cd "$SCRIPT_DIR"
+
+    # Set CycloneDDS configuration
+    export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
     python3 scripts/test_autonomous_drive.py
     TEST_STATUS=$?

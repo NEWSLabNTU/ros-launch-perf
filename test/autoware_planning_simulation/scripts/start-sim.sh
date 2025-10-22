@@ -34,12 +34,27 @@ fi
 echo "Autoware installation: $AUTOWARE_PATH"
 echo "Starting Autoware with play_launch (monitoring enabled)..."
 
-# Source Autoware setup
+# Determine ros-launch-perf workspace path
+ROS_LAUNCH_PERF_WS="$(cd "$SCRIPT_DIR/../.." && pwd)"
+ROS_LAUNCH_PERF_SETUP="$ROS_LAUNCH_PERF_WS/install/setup.bash"
+
+# Source Autoware setup first
 cd "$AUTOWARE_PATH/install"
 source setup.bash 2>&1 >/dev/null
 
+# Then source ros-launch-perf workspace (prepends to AMENT_PREFIX_PATH)
+if [ -f "$ROS_LAUNCH_PERF_SETUP" ]; then
+    source "$ROS_LAUNCH_PERF_SETUP" 2>&1 >/dev/null
+else
+    echo "WARNING: ros-launch-perf setup.bash not found at $ROS_LAUNCH_PERF_SETUP"
+    echo "Using system-installed dump_launch and play_launch if available"
+fi
+
 # Return to script directory
 cd "$SCRIPT_DIR"
+
+# Set CycloneDDS configuration
+export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
 # Dump launch execution
 dump_launch \
