@@ -24,14 +24,16 @@ test/autoware_planning_simulation/
 ├── Makefile              # Main test automation
 ├── README.md             # This file
 ├── autoware              # Symlink to Autoware workspace
+├── cyclonedds.xml        # CycloneDDS configuration
 ├── record.json           # Launch execution record (generated)
 ├── poses_config.yaml     # Test poses configuration
 ├── play_log/             # Execution logs and metrics (generated)
 └── scripts/              # Utility scripts
-    ├── start-sim.sh              # Start simulator script
-    ├── test_autonomous_drive.py  # Autonomous driving test
-    ├── plot_resource_usage.py    # Plot generation tool
-    └── kill_orphan_nodes.sh      # Cleanup utility
+    ├── start-sim.sh                # Start simulator with play_launch
+    ├── start-sim-ros2-launch.sh    # Start simulator with ros2 launch (comparison)
+    ├── test_autonomous_drive.py    # Autonomous driving test
+    ├── plot_resource_usage.py      # Plot generation tool
+    └── kill_orphan_nodes.sh        # Cleanup utility
 ```
 
 ## Usage
@@ -44,6 +46,9 @@ make help
 
 # Start Autoware planning simulator with play_launch
 make start-sim
+
+# Start Autoware with standard ros2 launch (for comparison)
+make start-sim-ros2-launch
 
 # Run autonomous driving test (requires simulator running)
 make drive
@@ -70,7 +75,9 @@ python3 scripts/test_autonomous_drive.py
 ## Files
 
 - `Makefile` - Build automation for Autoware tests
-- `scripts/start-sim.sh` - Main script (starts Autoware planning simulator with play_launch)
+- `cyclonedds.xml` - CycloneDDS configuration for localhost-only communication
+- `scripts/start-sim.sh` - Starts Autoware planning simulator with play_launch
+- `scripts/start-sim-ros2-launch.sh` - Starts Autoware with standard ros2 launch (for comparison)
 - `scripts/test_autonomous_drive.py` - Python script to automate autonomous driving test
 - `scripts/plot_resource_usage.py` - Resource usage plotting tool
 - `scripts/kill_orphan_nodes.sh` - Cleanup orphan ROS nodes
@@ -182,3 +189,31 @@ The following flags are used for Autoware testing:
 - `--load-node-timeout-millis 60000` - Wait up to 60 seconds for each composable node to load
 
 These conservative timeouts are appropriate for Autoware's large number of containers and composable nodes, where DDS initialization can take significant time.
+
+## Comparison Testing
+
+To compare `play_launch` behavior with standard `ros2 launch`:
+
+```bash
+# Test with play_launch
+make start-sim
+
+# Test with standard ros2 launch (in a new terminal after killing play_launch)
+make start-sim-ros2-launch
+```
+
+Both methods use the same:
+- Autoware workspace (`autoware/`)
+- Map path configuration
+- CycloneDDS settings (`cyclonedds.xml`)
+
+This allows you to verify that `play_launch` produces equivalent behavior to the standard launch system.
+
+### DDS Configuration
+
+Both scripts use `cyclonedds.xml` which configures:
+- Localhost-only communication (loopback interface)
+- 65.5KB max message size
+- 10MB socket buffer size
+
+The `CYCLONEDDS_URI` environment variable is set before launching to ensure all nodes use this configuration.
