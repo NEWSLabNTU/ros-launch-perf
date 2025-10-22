@@ -316,11 +316,11 @@ processes:
 - [ ] GPU metrics validated against nvidia-smi output (requires GPU hardware)
 - [ ] System-wide totals match sum of all monitored processes (future work)
 
-### Phase 3: Visualization ✅ PARTIALLY COMPLETED
+### Phase 3: Visualization & Analysis ✅ PARTIALLY COMPLETED
 
 **Implemented:** Python plotting tool at `scripts/autoware_test/plot_resource_usage.py`
 
-**Outputs (7 files in `plots/` directory):**
+**Current Outputs (7 files in `plots/` directory):**
 1. `cpu_usage.png` - Timeline plot with per-node CPU usage
 2. `memory_usage.png` - Timeline plot with per-node memory usage
 3. `cpu_distribution.png` - Box plot (min, Q1, median, Q3, max)
@@ -339,33 +339,137 @@ cd scripts/autoware_test
 
 **Remaining Work Items:**
 
-**3.1 CLI Analysis Tool**
+**3.1 Python Plotting Tool Enhancements**
+- [ ] Add GPU usage timeline plot (`gpu_usage.png`)
+  - GPU memory usage per process over time
+  - GPU compute utilization per process over time
+  - Multi-GPU support (separate plots per GPU or stacked)
+- [ ] Add GPU distribution plot (`gpu_distribution.png`)
+  - Box plot for GPU memory and utilization
+- [ ] Add I/O usage timeline plots
+  - `io_read_usage.png` - Total read rate (bytes/sec) over time
+  - `io_write_usage.png` - Total write rate (bytes/sec) over time
+  - Separate disk vs total I/O if useful
+- [ ] Add I/O distribution plot (`io_distribution.png`)
+  - Box plot for read/write rates
+- [ ] Enhance `statistics.txt` with additional metrics:
+  - Top 10 GPU memory consumers (if GPU data available)
+  - Top 10 I/O consumers (by average read/write rate)
+  - Top 10 network connection users (TCP/UDP)
+  - Per-metric statistics (min/max/avg/p95/p99)
+- [ ] Add network statistics to `statistics.txt`
+  - Average TCP/UDP connection counts per process
+  - Peak connection counts
+
+**3.2 CLI Analysis Tool (Future)**
 - [ ] Implement `play_launch analyze` subcommand
 - [ ] Generate summary report from CSV files
-- [ ] Identify top CPU/memory consumers
+- [ ] Identify top CPU/memory/GPU/I/O consumers
 - [ ] Detect anomalies (spikes, memory leaks)
 - [ ] Export to JSON/HTML formats
 
-**3.2 Interactive Plots**
+**3.3 Interactive Plots (Future)**
 - [ ] Implement `play_launch plot` subcommand
 - [ ] Use plotly for interactive visualizations
 - [ ] Time-series plots with zoom/pan
 - [ ] Flamegraph generation for CPU profiling
 - [ ] Comparison plots between multiple runs
 
-**3.3 Web Dashboard (Optional)**
+**3.4 Web Dashboard (Optional)**
 - [ ] Real-time metrics streaming via WebSocket
 - [ ] Interactive plots with drill-down
-- [ ] Live CPU/memory gauges
+- [ ] Live CPU/memory/GPU/I/O gauges
 - [ ] Process tree visualization
 - [ ] Export/share functionality
 
 **Test Cases:**
-- [ ] Analysis tool identifies correct top consumers
-- [ ] Anomaly detection catches memory leaks
-- [ ] Interactive plots render without errors
-- [ ] Comparison plots accurately overlay multiple runs
-- [ ] Web dashboard updates in real-time (<1s latency)
+- [ ] GPU plots correctly visualize memory and utilization when data available
+- [ ] GPU plots handle missing data gracefully (no GPU hardware)
+- [ ] I/O rate plots show meaningful trends
+- [ ] Statistics.txt includes all new metrics (GPU, I/O, network)
+- [ ] Analysis tool identifies correct top consumers (future)
+- [ ] Anomaly detection catches memory leaks (future)
+- [ ] Interactive plots render without errors (future)
+- [ ] Comparison plots accurately overlay multiple runs (future)
+- [ ] Web dashboard updates in real-time (<1s latency) (future)
+
+### Phase 4: CLI Refactoring - Subcommand Architecture
+
+**Objective**: Restructure play_launch into a multi-subcommand CLI tool for better organization and extensibility.
+
+**New CLI Structure:**
+```bash
+play_launch <SUBCOMMAND> [OPTIONS]
+
+Subcommands:
+  launch    Launch ROS nodes from dump file (current default behavior)
+  run       Run a single ROS node (future implementation)
+  analyze   Analyze resource usage from metrics CSV files
+  plot      Generate plots from metrics CSV files
+  help      Print this message or the help of the given subcommand(s)
+```
+
+**Phase 4.0: Infrastructure Setup**
+- [ ] Add `clap` subcommand support to `options.rs`
+- [ ] Create subcommand enum: `Launch`, `Run`, `Analyze`, `Plot`
+- [ ] Refactor `main.rs` to dispatch to subcommand handlers
+- [ ] Preserve backward compatibility (no subcommand defaults to `launch`)
+
+**Phase 4.1: `launch` Subcommand (Refactor Existing)**
+- [ ] Move current functionality to `launch` subcommand handler
+- [ ] Keep all existing options: `--input-file`, `--log-dir`, `--enable-monitoring`, etc.
+- [ ] Ensure `play_launch` (no subcommand) still works (defaults to `launch`)
+- [ ] Update help text to show subcommand structure
+
+**Phase 4.2: `analyze` Subcommand**
+- [ ] Implement basic analysis subcommand
+- [ ] Options:
+  - `--log-dir <PATH>`: Path to log directory with metrics (required)
+  - `--output <PATH>`: Output file for analysis report (default: stdout)
+  - `--format <FORMAT>`: Output format (text, json, html)
+  - `--top <N>`: Show top N consumers (default: 10)
+  - `--metrics <METRICS>`: Comma-separated metrics to analyze (cpu,memory,gpu,io,network)
+- [ ] Generate summary statistics (min/max/avg/p95/p99)
+- [ ] Identify top consumers per metric
+- [ ] Export to requested format
+
+**Phase 4.3: `plot` Subcommand**
+- [ ] Implement plot generation subcommand (calls Python scripts or native plotting)
+- [ ] Options:
+  - `--log-dir <PATH>`: Path to log directory with metrics (required)
+  - `--output-dir <PATH>`: Output directory for plots (default: plots/)
+  - `--plots <PLOTS>`: Comma-separated plot types (cpu,memory,gpu,io,network,all)
+  - `--format <FORMAT>`: Plot format (png, svg, html)
+- [ ] Generate all requested plots
+- [ ] Create statistics.txt
+- [ ] Create containers.txt mapping
+
+**Phase 4.4: `run` Subcommand (Future)**
+- [ ] Design API for running single ROS nodes
+- [ ] Options TBD (node package, executable, namespace, params, etc.)
+- [ ] Integration with resource monitoring
+- [ ] Note: Implementation details to be discussed later
+
+**Implementation Notes:**
+- Use `clap` derive macros for subcommand support
+- Maintain backward compatibility during transition
+- Move subcommand logic to separate modules: `cmd_launch.rs`, `cmd_analyze.rs`, `cmd_plot.rs`, `cmd_run.rs`
+- Share common infrastructure (monitoring, logging) across subcommands
+
+**Benefits:**
+- Clear separation of concerns
+- Easier to add new functionality
+- Better help text organization
+- Standard CLI pattern (like `git`, `cargo`, etc.)
+- Enables future expansion (e.g., `play_launch replay`, `play_launch diff`)
+
+**Test Cases:**
+- [ ] `play_launch` (no subcommand) works as before (defaults to `launch`)
+- [ ] `play_launch launch` equivalent to current behavior
+- [ ] `play_launch analyze` generates correct statistics
+- [ ] `play_launch plot` creates all plots
+- [ ] `play_launch help` shows all subcommands
+- [ ] `play_launch <subcommand> --help` shows subcommand-specific options
 
 ## Security Considerations
 
@@ -486,10 +590,76 @@ monitoring:
 - `containers.txt` showing which nodes are loaded in each container
 - Visualization tools cross-reference container metrics with node listings
 
+## Recent Updates (2025-10-22)
+
+### ROS Packaging Migration ✅ COMPLETED
+
+**Objective:** Transition from standalone binary installation to proper ROS workspace packaging.
+
+**Changes Made:**
+- ✅ Removed `make install` and `make uninstall` targets from root Makefile
+- ✅ Removed installed binaries from `~/.cargo/bin/` (dump_launch, play_launch)
+- ✅ Updated all scripts to use `ros2 run dump_launch dump_launch` and `ros2 run play_launch play_launch`
+- ✅ Updated CLAUDE.md to document ROS-based workflow
+- ✅ Updated Makefile help text to show ROS usage patterns
+- ✅ Updated CAP_SYS_NICE documentation to reference install directory: `install/play_launch/lib/play_launch/play_launch`
+
+**Affected Files:**
+- `Makefile`: Removed install/uninstall targets, updated help
+- `test/autoware_planning_simulation/scripts/start-sim.sh`: Changed to use `ros2 run` commands
+- `test/autoware_planning_simulation/scripts/start-sim-and-drive.sh`: Changed to use `ros2 run` commands
+- `CLAUDE.md`: Updated Build & Install, Running the Tools, CAP_SYS_NICE sections
+
+**New Workflow:**
+```bash
+# Build workspace
+make build
+
+# Source workspace
+. install/setup.bash
+
+# Run tools
+ros2 run dump_launch dump_launch <package> <launch_file> [args...]
+ros2 run play_launch play_launch [options]
+
+# (Optional) Apply CAP_SYS_NICE for negative nice values
+sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch
+```
+
+**Note:** Capability must be reapplied after each rebuild since colcon overwrites the binary.
+
+### Process Cleanup Improvements ✅ COMPLETED
+
+**Objective:** Fix orphan process issues when play_launch is terminated with Ctrl-C.
+
+**Root Cause:** Child processes were spawned in the same process group as play_launch. When Ctrl-C is pressed, the terminal sends SIGINT to the entire foreground process group, causing both parent and children to receive the signal simultaneously. This created race conditions where some ROS nodes handled SIGINT independently or ignored it, surviving after play_launch exited.
+
+**Solution:** Implemented process group isolation using `.process_group(0)` when spawning child processes.
+
+**Changes Made:**
+- ✅ Added `.process_group(0)` to `NodeCommandLine::to_command()` in `src/play_launch/src/node_cmdline.rs:361-366`
+- ✅ Added `.process_group(0)` to ros2 component load subprocess in `src/play_launch/src/component_loader.rs:255-260`
+- ✅ Replaced all `eprintln!` statements with proper structured logging using `tracing` crate
+
+**How It Works:**
+- `.process_group(0)` creates a new process group for each child with the child's PID as the group ID
+- Children are isolated from receiving signals sent to the parent's process group
+- When Ctrl-C is pressed, only play_launch receives SIGINT from the terminal
+- play_launch's signal handler calls `kill_all_descendants()` to explicitly terminate all children
+- CleanupGuard ensures cleanup happens even on panic or unexpected termination
+
+**Affected Files:**
+- `src/play_launch/src/node_cmdline.rs`: Added process group isolation for all nodes
+- `src/play_launch/src/component_loader.rs`: Added process group isolation for ros2 component load
+- `src/play_launch/src/main.rs`: Replaced eprintln with debug!/warn! logging
+- `src/play_launch/src/component_loader.rs`: Replaced eprintln with debug!/warn! logging
+
+**Status:** Successfully rebuilt and tested. Binary updated at 2025-10-22 11:41.
+
 ## Future Enhancements
 
-1. **GPU Metrics**: NVIDIA/AMD GPU usage and memory
-2. **Network I/O**: Per-process network statistics
+1. ~~**GPU Metrics**: NVIDIA/AMD GPU usage and memory~~ ✅ COMPLETED (Phase 2)
+2. ~~**Network I/O**: Per-process network statistics~~ ✅ COMPLETED (Phase 2)
 3. **System-Level Aggregation**: Compare regular nodes vs. containers, temporal patterns
 4. **Real-time Dashboard**: Web-based live monitoring
 5. **Comparative Analysis**: Compare multiple runs
@@ -504,4 +674,4 @@ monitoring:
 
 ---
 
-**Last Updated:** 2025-10-21 (Phase 2 Complete)
+**Last Updated:** 2025-10-22 (Phase 2 Complete, ROS Packaging Migration & Process Cleanup Improvements)
