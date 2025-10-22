@@ -39,7 +39,7 @@ use std::{
     time::Duration,
 };
 use tokio::runtime::Runtime;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
 static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
@@ -121,9 +121,12 @@ fn main() -> eyre::Result<()> {
 
     // Debug: Check AMENT_PREFIX_PATH at startup
     if let Ok(ament_path) = std::env::var("AMENT_PREFIX_PATH") {
-        eprintln!("MAIN: AMENT_PREFIX_PATH first 200 chars: {}", ament_path.chars().take(200).collect::<String>());
+        debug!(
+            "AMENT_PREFIX_PATH first 200 chars: {}",
+            ament_path.chars().take(200).collect::<String>()
+        );
     } else {
-        eprintln!("MAIN: WARNING - AMENT_PREFIX_PATH NOT SET!");
+        warn!("AMENT_PREFIX_PATH NOT SET!");
     }
 
     let opts = Options::parse();

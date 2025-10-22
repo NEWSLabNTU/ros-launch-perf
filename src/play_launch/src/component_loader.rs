@@ -239,9 +239,12 @@ fn call_component_load_subprocess(
 
     // Debug: Check if AMENT_PREFIX_PATH is set
     if let Ok(ament_path) = std::env::var("AMENT_PREFIX_PATH") {
-        eprintln!("DEBUG: AMENT_PREFIX_PATH = {}", ament_path.chars().take(200).collect::<String>());
+        debug!(
+            "AMENT_PREFIX_PATH = {}",
+            ament_path.chars().take(200).collect::<String>()
+        );
     } else {
-        eprintln!("WARNING: AMENT_PREFIX_PATH is not set!");
+        warn!("AMENT_PREFIX_PATH is not set!");
     }
 
     let mut cmd = Command::new("ros2");
