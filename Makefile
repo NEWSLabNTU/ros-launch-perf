@@ -44,7 +44,7 @@ build_ros2_rust:
 	@mkdir -p $(LOG_DIR)
 	@. /opt/ros/humble/setup.sh && \
 	export RUST_LOG=info && \
-	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/ros2_rust --base-paths src/interface/ros2-rust 2>&1 | tee $(LOG_DIR)/ros2_rust.log
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/ros2_rust 2>&1 | tee $(LOG_DIR)/ros2_rust.log
 
 .PHONY: build_interface
 build_interface:
@@ -52,7 +52,7 @@ build_interface:
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
-	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/interface/ros2 2>&1 | tee $(LOG_DIR)/interface.log
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/interface 2>&1 | tee $(LOG_DIR)/interface.log
 
 .PHONY: build_dump_launch
 build_dump_launch:
@@ -60,7 +60,7 @@ build_dump_launch:
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
-	colcon build $(COLCON_BUILD_FLAGS) --packages-select dump_launch 2>&1 | tee $(LOG_DIR)/dump_launch.log
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/dump_launch 2>&1 | tee $(LOG_DIR)/dump_launch.log
 
 .PHONY: build_play_launch
 build_play_launch:
@@ -68,7 +68,7 @@ build_play_launch:
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
-	colcon build $(COLCON_BUILD_FLAGS) --packages-select play_launch 2>&1 | tee $(LOG_DIR)/play_launch.log
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch 2>&1 | tee $(LOG_DIR)/play_launch.log
 
 .PHONY: install
 install: build
@@ -89,7 +89,7 @@ uninstall:
 .PHONY: clean
 clean:
 	@echo "Cleaning build artifacts..."
-	@rm -rf build install log $(LOG_DIR)
+	@rm -rf build install log .cargo $(LOG_DIR)
 	@echo "Clean complete!"
 
 .PHONY: test
