@@ -45,11 +45,11 @@ start_simulator() {
     # Set CycloneDDS configuration
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-    dump_launch \
+    ros2 run dump_launch dump_launch \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
 
-    play_launch \
+    ros2 run play_launch play_launch \
         --wait-for-service-ready \
         --service-ready-timeout-secs "$SERVICE_TIMEOUT" \
         --load-node-timeout-millis "$LOAD_TIMEOUT"

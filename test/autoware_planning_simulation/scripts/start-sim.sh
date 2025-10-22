@@ -46,8 +46,9 @@ source setup.bash 2>&1 >/dev/null
 if [ -f "$ROS_LAUNCH_PERF_SETUP" ]; then
     source "$ROS_LAUNCH_PERF_SETUP" 2>&1 >/dev/null
 else
-    echo "WARNING: ros-launch-perf setup.bash not found at $ROS_LAUNCH_PERF_SETUP"
-    echo "Using system-installed dump_launch and play_launch if available"
+    echo "ERROR: ros-launch-perf setup.bash not found at $ROS_LAUNCH_PERF_SETUP"
+    echo "Please build the workspace with: cd $ROS_LAUNCH_PERF_WS && make build"
+    exit 1
 fi
 
 # Return to script directory
@@ -57,12 +58,12 @@ cd "$SCRIPT_DIR"
 export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
 # Dump launch execution
-dump_launch \
+ros2 run dump_launch dump_launch \
     autoware_launch planning_simulator.launch.xml \
     map_path:="$MAP_PATH"
 
 # Replay with play_launch
-play_launch \
+ros2 run play_launch play_launch \
     --enable-monitoring \
     --monitor-interval-ms 1000 \
     --wait-for-service-ready \
