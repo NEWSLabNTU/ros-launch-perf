@@ -15,10 +15,6 @@ help:
 	@echo "  make build_dump_launch      - Stage 3: Build dump_launch Python package"
 	@echo "  make build_play_launch      - Stage 4: Build play_launch Rust package"
 	@echo ""
-	@echo "Installation:"
-	@echo "  make install                - Install binaries to ~/.cargo/bin"
-	@echo "  make uninstall              - Remove installed binaries"
-	@echo ""
 	@echo "Development:"
 	@echo "  make clean                  - Clean all build artifacts"
 	@echo "  make test                   - Run all tests"
@@ -26,6 +22,11 @@ help:
 	@echo ""
 	@echo "ROS Workspace Setup:"
 	@echo "  make prepare                - Install ROS dependencies with rosdep"
+	@echo ""
+	@echo "Usage:"
+	@echo "  Source workspace:  . install/setup.bash"
+	@echo "  Run dump_launch:   ros2 run dump_launch dump_launch <package> <launch_file> [args...]"
+	@echo "  Run play_launch:   ros2 run play_launch play_launch [options]"
 	@echo ""
 
 .PHONY: prepare
@@ -69,22 +70,6 @@ build_play_launch:
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
 	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch 2>&1 | tee $(LOG_DIR)/play_launch.log
-
-.PHONY: install
-install: build
-	@echo "Installing binaries to ~/.cargo/bin..."
-	@mkdir -p ~/.cargo/bin
-	@cp install/play_launch/lib/play_launch/play_launch ~/.cargo/bin/
-	@cp install/dump_launch/lib/dump_launch/dump_launch ~/.cargo/bin/
-	@echo "Installation complete!"
-	@echo "  dump_launch -> ~/.cargo/bin/dump_launch"
-	@echo "  play_launch -> ~/.cargo/bin/play_launch"
-
-.PHONY: uninstall
-uninstall:
-	@echo "Removing installed binaries..."
-	@rm -f ~/.cargo/bin/dump_launch ~/.cargo/bin/play_launch
-	@echo "Uninstallation complete!"
 
 .PHONY: clean
 clean:
