@@ -217,6 +217,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "builtin_interfaces"
+version = "1.2.2"
+dependencies = [
+ "rosidl_runtime_rs",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -302,6 +309,15 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "composition_interfaces"
+version = "1.2.2"
+dependencies = [
+ "builtin_interfaces",
+ "rcl_interfaces",
+ "rosidl_runtime_rs",
+]
 
 [[package]]
 name = "concurrent-queue"
@@ -867,6 +883,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clap",
+ "composition_interfaces",
  "csv",
  "eyre",
  "futures",
@@ -877,6 +894,7 @@ dependencies = [
  "nvml-wrapper",
  "pkg-config",
  "rayon",
+ "rcl_interfaces",
  "rclrs",
  "rosidl_runtime_rs",
  "serde",
@@ -939,6 +957,14 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rcl_interfaces"
+version = "1.2.2"
+dependencies = [
+ "builtin_interfaces",
+ "rosidl_runtime_rs",
 ]
 
 [[package]]
@@ -1666,14 +1692,6 @@ name = "actionlib_msgs"
 version = "4.9.0"
 
 [[patch.unused]]
-name = "builtin_interfaces"
-version = "1.2.2"
-
-[[patch.unused]]
-name = "composition_interfaces"
-version = "1.2.2"
-
-[[patch.unused]]
 name = "diagnostic_msgs"
 version = "4.9.0"
 
@@ -1694,8 +1712,8 @@ name = "nav_msgs"
 version = "4.9.0"
 
 [[patch.unused]]
-name = "rcl_interfaces"
-version = "1.2.2"
+name = "play_launch"
+version = "0.1.0"
 
 [[patch.unused]]
 name = "rosgraph_msgs"

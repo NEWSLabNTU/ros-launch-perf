@@ -1,5 +1,4 @@
 mod component_loader;
-mod composition_interfaces;
 mod config;
 mod container_readiness;
 mod context;
