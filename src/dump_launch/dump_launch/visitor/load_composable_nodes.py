@@ -1,27 +1,23 @@
 import threading
-from typing import List
-from typing import Optional
-
-import launch.logging
-from launch.utilities import is_a_subclass
-from launch.action import Action
-from launch.launch_context import LaunchContext
-from launch_ros.actions.load_composable_nodes import (
-    LoadComposableNodes,
-    get_composable_node_load_request,
-)
-from launch_ros.actions.composable_node_container import ComposableNodeContainer
-from launch.utilities import normalize_to_list_of_substitutions
-from launch_ros.ros_adapters import get_ros_node
-from launch_ros.utilities import add_node_name
-from launch_ros.utilities import get_node_name_count
-from launch.utilities import perform_substitutions
-from launch.some_substitutions_type import SomeSubstitutionsType_types_tuple
+from typing import List, Optional
 
 import composition_interfaces.srv
+import launch.logging
+from launch.action import Action
+from launch.launch_context import LaunchContext
+from launch.some_substitutions_type import SomeSubstitutionsType_types_tuple
+from launch.utilities import (is_a_subclass,
+                              normalize_to_list_of_substitutions,
+                              perform_substitutions)
+from launch_ros.actions.composable_node_container import \
+    ComposableNodeContainer
+from launch_ros.actions.load_composable_nodes import (
+    LoadComposableNodes, get_composable_node_load_request)
+from launch_ros.ros_adapters import get_ros_node
+from launch_ros.utilities import add_node_name, get_node_name_count
 
-from ..utils import param_to_kv, text_to_kv, log_level_code_to_text
 from ..launch_dump import LaunchDump, LoadNodeRecord
+from ..utils import log_level_code_to_text, param_to_kv, text_to_kv
 
 
 def visit_load_composable_nodes(

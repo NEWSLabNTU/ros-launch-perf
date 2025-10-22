@@ -1,18 +1,12 @@
 from typing import Any  # noqa: F401
-from typing import List
-from typing import Optional
 from typing import Tuple  # noqa: F401
-
+from typing import List, Optional
 
 from launch.actions.execute_local import ExecuteLocal
 from launch.actions.opaque_function import OpaqueFunction
-
 from launch.event_handler import EventHandler
-from launch.event_handlers import OnProcessExit
-from launch.event_handlers import OnProcessIO
-from launch.event_handlers import OnShutdown
-from launch.events.process import ShutdownProcess
-from launch.events.process import SignalProcess
+from launch.event_handlers import OnProcessExit, OnProcessIO, OnShutdown
+from launch.events.process import ShutdownProcess, SignalProcess
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.substitution import Substitution  # noqa: F401

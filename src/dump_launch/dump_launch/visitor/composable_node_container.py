@@ -1,12 +1,12 @@
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
-from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
+from launch_ros.actions.composable_node_container import \
+    ComposableNodeContainer
 
-from .node import visit_node
 from ..launch_dump import ComposableNodeContainerRecord, LaunchDump
+from .node import visit_node
 
 
 def visit_composable_node_container(
@@ -40,7 +40,9 @@ def visit_composable_node_container(
                 target_container=container,
             )
         ]
-    container_actions = visit_node(container, context, dump)  # type: Optional[List[Action]]
+    container_actions = visit_node(
+        container, context, dump
+    )  # type: Optional[List[Action]]
 
     # Save a record in dump
     node_name = container._Node__expanded_node_name

@@ -1,35 +1,28 @@
 """Module for the LaunchInspector class."""
 
-import dataclasses
 import asyncio
 import collections.abc
 import contextlib
+import dataclasses
 import logging
 import platform
 import signal
 import threading
-from typing import Coroutine
-from typing import Iterable
 from typing import List  # noqa: F401
-from typing import Optional
 from typing import Set  # noqa: F401
-from typing import Text
 from typing import Tuple  # noqa: F401
-
-import osrf_pycommon.process_utils
+from typing import Coroutine, Iterable, Optional, Text
 
 import launch.logging
+import osrf_pycommon.process_utils
 from launch.event import Event
-from launch.event_handlers import OnShutdown, OnProcessExit
-from launch.events import IncludeLaunchDescription
-from launch.events import Shutdown
+from launch.event_handlers import OnProcessExit, OnShutdown
+from launch.events import IncludeLaunchDescription, Shutdown
 from launch.launch_context import LaunchContext
 from launch.launch_description import LaunchDescription
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.some_actions_type import SomeActionsType
-from launch.utilities import AsyncSafeSignalManager
-from launch.utilities import is_a_subclass
-
+from launch.utilities import AsyncSafeSignalManager, is_a_subclass
 from ros_cmdline import parse_ros_cmdline
 
 from .event_handlers import OnIncludeLaunchDescription
@@ -77,7 +70,9 @@ class LaunchInspector:
         )
 
         # Setup storage for state.
-        self._entity_future_pairs = []  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
+        self._entity_future_pairs = (
+            []
+        )  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
 
         # Used to allow asynchronous use of self.__loop_from_run_thread without
         # it being set to None by run() as it exits.

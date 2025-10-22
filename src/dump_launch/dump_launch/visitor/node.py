@@ -1,23 +1,17 @@
-from typing import List
-from typing import Optional
-from typing import Dict
-from typing import Union
-
+from typing import Dict, List, Optional, Union
 
 import launch
-from launch_ros.actions.node import Node
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch_ros.utilities import add_node_name
-from launch_ros.utilities import get_node_name_count
-from launch.utilities import perform_substitutions, is_a
+from launch.utilities import (is_a, normalize_to_list_of_substitutions,
+                              perform_substitutions)
+from launch_ros.actions.node import Node
 from launch_ros.descriptions import Parameter
-from launch.utilities import normalize_to_list_of_substitutions
+from launch_ros.utilities import add_node_name, get_node_name_count
 
-from ..utils import param_to_kv
-
-from .execute_process import visit_execute_process
 from ..launch_dump import LaunchDump, NodeRecord
+from ..utils import param_to_kv
+from .execute_process import visit_execute_process
 
 
 def visit_node(

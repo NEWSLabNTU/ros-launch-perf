@@ -1,26 +1,23 @@
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
 from launch.action import Action
 from launch.actions.include_launch_description import IncludeLaunchDescription
-from launch.utilities import is_a
+from launch.events import ExecutionComplete  # noqa
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch_ros.actions.load_composable_nodes import (
-    LoadComposableNodes,
-)
-from launch_ros.actions.composable_node_container import ComposableNodeContainer
+from launch.utilities import is_a
+from launch_ros.actions.composable_node_container import \
+    ComposableNodeContainer
 from launch_ros.actions.lifecycle_node import LifecycleNode
+from launch_ros.actions.load_composable_nodes import LoadComposableNodes
 from launch_ros.actions.node import Node
-from launch.events import ExecutionComplete  # noqa
-
 
 from ..launch_dump import LaunchDump
-from .load_composable_nodes import visit_load_composable_nodes
-from .lifecycle_node import visit_lifecycle_node
-from .node import visit_node
 from .composable_node_container import visit_composable_node_container
 from .include_launch_description import visit_include_launch_description
+from .lifecycle_node import visit_lifecycle_node
+from .load_composable_nodes import visit_load_composable_nodes
+from .node import visit_node
 
 
 def visit_action(

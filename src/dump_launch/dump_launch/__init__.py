@@ -1,18 +1,18 @@
-import os
-import json
-from collections import OrderedDict
 import argparse
+import json
+import os
+from collections import OrderedDict
 from typing import List  # noqa: F401
 from typing import Set  # noqa: F401
-from typing import Text
 from typing import Tuple  # noqa: F401
+from typing import Text
 
+from ament_index_python.packages import PackageNotFoundError
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import AnyLaunchDescriptionSource
-from ros2launch.api import get_share_file_path_from_package
-from ros2launch.api import MultipleLaunchFilesError
-from ament_index_python.packages import PackageNotFoundError
+from ros2launch.api import (MultipleLaunchFilesError,
+                            get_share_file_path_from_package)
 
 from .inspector import LaunchInspector
 

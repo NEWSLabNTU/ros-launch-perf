@@ -13,13 +13,12 @@
 # limitations under the License.
 
 import launch
-from launch.actions import DeclareLaunchArgument
-from launch.actions import OpaqueFunction
+import yaml
+from launch.actions import DeclareLaunchArgument, OpaqueFunction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import ComposableNodeContainer
 from launch_ros.descriptions import ComposableNode
 from launch_ros.substitutions import FindPackageShare
-import yaml
 
 
 def launch_setup(context, *args, **kwargs):

@@ -1,16 +1,15 @@
 """Module for entity visitors."""
 
 import asyncio
-from typing import List
-from typing import Tuple
+from typing import List, Tuple
 
 from launch.action import Action
-from launch.utilities import is_a_subclass
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
+from launch.utilities import is_a_subclass
 
-from .action import visit_action
 from ..launch_dump import LaunchDump
+from .action import visit_action
 
 
 def visit_entity(

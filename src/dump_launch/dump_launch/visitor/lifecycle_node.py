@@ -1,13 +1,11 @@
-from typing import List
-from typing import Optional
+from typing import List, Optional
 
-from launch_ros.actions.lifecycle_node import LifecycleNode
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
+from launch_ros.actions.lifecycle_node import LifecycleNode
 
-
-from .node import visit_node
 from ..launch_dump import LaunchDump
+from .node import visit_node
 
 
 def visit_lifecycle_node(

@@ -2,10 +2,10 @@
 
 from typing import Text
 
+from launch.actions import OpaqueFunction
 from launch.event_handler import EventHandler
 from launch.events import IncludeLaunchDescription
 from launch.utilities import is_a_subclass
-from launch.actions import OpaqueFunction
 
 
 class OnIncludeLaunchDescription(EventHandler):
