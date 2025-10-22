@@ -1,4 +1,4 @@
-.PHONY: help start-sim drive start-sim-and-drive kill-orphans check-autoware
+.PHONY: help start-sim start-sim-ros2-launch drive start-sim-and-drive kill-orphans check-autoware
 
 SHELL := /bin/bash
 SCRIPT_DIR := $(shell pwd)
@@ -16,6 +16,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  start-sim          - Start Autoware planning simulator with play_launch"
+	@echo "  start-sim-ros2-launch - Start Autoware with standard ros2 launch (for comparison)"
 	@echo "  drive              - Run autonomous driving test"
 	@echo "  start-sim-and-drive - Run complete test sequence (launch + autonomous test)"
 	@echo "  kill-orphans       - Kill orphan ROS nodes"
@@ -44,6 +45,9 @@ check-autoware:
 
 start-sim: check-autoware
 	@bash scripts/start-sim.sh
+
+start-sim-ros2-launch: check-autoware
+	@bash scripts/start-sim-ros2-launch.sh
 
 drive: check-autoware
 	@echo "Running autonomous driving test..."
