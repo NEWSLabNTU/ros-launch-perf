@@ -46,10 +46,19 @@ impl NodeCommandLine {
             bail!(r#""package" is not set"#);
         };
 
-        let command: Vec<_> = ["ros2", "run", package, executable]
-            .into_iter()
-            .map(|s| s.to_string())
-            .collect();
+        // Find the executable directly using ament index instead of ros2 run CLI
+        let exe_path =
+            crate::ament_index::find_executable(package, executable).wrap_err_with(|| {
+                format!(
+                    "Failed to find executable '{}' in package '{}'",
+                    executable, package
+                )
+            })?;
+
+        let command: Vec<_> = vec![exe_path
+            .to_str()
+            .ok_or_else(|| eyre::eyre!("Executable path contains invalid UTF-8"))?
+            .to_string()];
 
         let user_args: Vec<_> = {
             let user_nonros_args = user_nonros_args.iter().flatten().map(|s| s.as_str());

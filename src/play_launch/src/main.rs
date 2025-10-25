@@ -1,3 +1,4 @@
+mod ament_index;
 mod component_loader;
 mod config;
 mod container_readiness;

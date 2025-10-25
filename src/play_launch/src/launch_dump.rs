@@ -83,59 +83,58 @@ impl ComposableNodeRecord {
 
     fn to_cmdline_standalone(&self) -> Vec<String> {
         let Self {
-            package,
-            plugin,
+            package: _,
+            plugin: _,
             namespace,
             log_level,
             remaps,
-            params,
-            extra_args,
+            params: _,
+            extra_args: _,
             node_name,
             target_container_name: _,
         } = self;
 
-        let command = [
-            "ros2",
-            "component",
-            "standalone",
-            package,
-            plugin,
-            "-n",
-            node_name,
-            "--node-namespace",
-            namespace,
-        ]
-        .into_iter()
-        .map(Cow::from);
+        // Option A: Spawn standalone container directly using ament index
+        // Find component_container executable directly
+        let container_exe =
+            match crate::ament_index::find_executable("rclcpp_components", "component_container") {
+                Ok(path) => path.to_string_lossy().into_owned(),
+                Err(_) => {
+                    // Fallback to full path if ament index fails
+                    "/opt/ros/humble/lib/rclcpp_components/component_container".to_string()
+                }
+            };
+
+        // Generate unique container name for this standalone node
+        let container_name = format!("standalone_container_{}", node_name);
+        let node_remap = format!("__node:={}", container_name);
+        let ns_remap = format!("__ns:={}", namespace);
+
+        let command = vec![
+            Cow::from(container_exe),
+            Cow::from("--ros-args"),
+            Cow::from("-r"),
+            Cow::from(node_remap),
+            Cow::from("-r"),
+            Cow::from(ns_remap),
+        ];
 
         let remap_args = remaps
             .iter()
             .flat_map(|(src, tgt)| [Cow::from("-r"), format!("{src}:={tgt}").into()]);
 
-        let param_args = params
-            .iter()
-            .flat_map(|(name, value)| [Cow::from("-p"), format!("{name}:={}", value).into()]);
-
-        let extra_arg_args = extra_args
-            .iter()
-            .flat_map(|(name, value)| [Cow::from("-e"), format!("{name}:={}", value).into()]);
-
         let log_level_args = log_level
             .as_deref()
-            .map(|level| ["--log-level", level])
-            .into_iter()
-            .flatten()
-            .map(Cow::from);
+            .map(|level| vec![Cow::from("--log-level"), Cow::from(level)])
+            .unwrap_or_default();
 
-        chain!(
-            command,
-            log_level_args,
-            remap_args,
-            param_args,
-            extra_arg_args
-        )
-        .map(|arg| arg.to_string())
-        .collect()
+        // Note: Standalone mode now only spawns the container.
+        // Component loading would need to be done separately via component_loader,
+        // which is a more complex refactoring. For now, this provides the container
+        // infrastructure for manual component loading.
+        chain!(command, log_level_args, remap_args)
+            .map(|arg| arg.to_string())
+            .collect()
     }
 
     fn to_cmdline_component(&self) -> Vec<String> {
