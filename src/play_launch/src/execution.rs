@@ -401,12 +401,9 @@ fn is_process_running(pid: u32) -> bool {
     // On Unix, we can check if a process exists by sending signal 0
     #[cfg(unix)]
     {
-        use std::process::Command;
-        Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false)
+        use nix::{sys::signal::kill, unistd::Pid};
+        // Signal 0 (None) checks if process exists without sending an actual signal
+        kill(Pid::from_raw(pid as i32), None).is_ok()
     }
 
     #[cfg(not(unix))]

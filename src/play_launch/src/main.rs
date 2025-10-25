@@ -63,9 +63,11 @@ fn kill_all_descendants() {
         // Kill them in reverse order (children before parents) with SIGTERM
         for &pid in descendants.iter().rev() {
             debug!("Sending SIGTERM to PID {}", pid);
-            let _ = std::process::Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
-                .output();
+            use nix::{
+                sys::signal::{kill, Signal},
+                unistd::Pid,
+            };
+            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGTERM);
         }
 
         // Give processes time to terminate gracefully
@@ -74,9 +76,11 @@ fn kill_all_descendants() {
         // Force kill any remaining processes with SIGKILL
         for &pid in descendants.iter().rev() {
             debug!("Sending SIGKILL to PID {}", pid);
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &pid.to_string()])
-                .output();
+            use nix::{
+                sys::signal::{kill, Signal},
+                unistd::Pid,
+            };
+            let _ = kill(Pid::from_raw(pid as i32), Signal::SIGKILL);
         }
     } else {
         debug!("No descendant processes found to terminate");
@@ -86,23 +90,21 @@ fn kill_all_descendants() {
 /// Recursively find all descendant PIDs of a given parent PID
 #[cfg(unix)]
 fn find_all_descendants(parent_pid: u32) -> Vec<u32> {
+    use sysinfo::System;
+
     let mut result = Vec::new();
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
-    // Use pgrep to find direct children of this parent
-    let output = std::process::Command::new("pgrep")
-        .args(["-P", &parent_pid.to_string()])
-        .output();
-
-    if let Ok(output) = output {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                if let Ok(child_pid) = line.trim().parse::<u32>() {
-                    // Add this child
-                    result.push(child_pid);
-                    // Recursively find this child's descendants (grandchildren, etc.)
-                    result.extend(find_all_descendants(child_pid));
-                }
+    // Find all processes that have parent_pid as their parent
+    for (pid, process) in sys.processes() {
+        if let Some(parent) = process.parent() {
+            if parent.as_u32() == parent_pid {
+                let child_pid = pid.as_u32();
+                // Add this child
+                result.push(child_pid);
+                // Recursively find this child's descendants (grandchildren, etc.)
+                result.extend(find_all_descendants(child_pid));
             }
         }
     }
