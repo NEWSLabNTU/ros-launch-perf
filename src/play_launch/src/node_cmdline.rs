@@ -358,6 +358,12 @@ impl NodeCommandLine {
         let mut command = Command::new(program);
         command.args(args);
 
+        // Explicitly preserve AMENT_PREFIX_PATH to ensure containers have access to all workspaces
+        // This is critical for ament index lookups when loading composable nodes
+        if let Ok(ament_prefix_path) = std::env::var("AMENT_PREFIX_PATH") {
+            command.env("AMENT_PREFIX_PATH", ament_prefix_path);
+        }
+
         // Set process group to isolate child from parent's signal handling
         #[cfg(unix)]
         {
