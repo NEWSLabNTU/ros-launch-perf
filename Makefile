@@ -18,6 +18,7 @@ help:
 	@echo "Development:"
 	@echo "  make clean                  - Clean all build artifacts"
 	@echo "  make test                   - Run all tests"
+	@echo "  make lint                   - Run linters (clippy + ruff)"
 	@echo "  make format                 - Format code"
 	@echo ""
 	@echo "ROS Workspace Setup:"
@@ -83,6 +84,14 @@ test:
 	@. install/setup.sh && \
 	colcon test --packages-select dump_launch play_launch && \
 	colcon test-result --all --verbose
+
+.PHONY: lint
+lint:
+	@echo "Running Rust clippy..."
+	@cd src/play_launch && cargo clippy --all-targets --all-features -- -D warnings
+	@echo "Running Python ruff checks..."
+	@cd src/dump_launch && python3 -m ruff check .
+	@echo "Lint checks passed!"
 
 .PHONY: format
 format:
