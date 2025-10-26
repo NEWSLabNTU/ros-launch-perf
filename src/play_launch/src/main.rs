@@ -133,18 +133,86 @@ fn main() -> eyre::Result<()> {
 
     let opts = Options::parse();
 
-    if opts.print_shell {
-        generate_shell(&opts)?;
+    // Route to appropriate handler based on subcommand
+    match &opts.command {
+        Some(options::Command::Launch(args)) => {
+            handle_launch(args, &opts.common)?;
+        }
+        Some(options::Command::Run(args)) => {
+            handle_run(args, &opts.common)?;
+        }
+        Some(options::Command::Dump(args)) => {
+            handle_dump(args)?;
+        }
+        Some(options::Command::Replay(args)) => {
+            // Replay subcommand
+            handle_replay(Some(args), &opts)?;
+        }
+        None => {
+            // No subcommand (backward compatibility)
+            handle_replay(None, &opts)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle the 'launch' subcommand (dump + replay)
+fn handle_launch(
+    _args: &options::LaunchArgs,
+    _common: &options::CommonOptions,
+) -> eyre::Result<()> {
+    error!("The 'launch' subcommand is not yet implemented.");
+    error!("This will be implemented in Phase 2 of the roadmap.");
+    error!("");
+    error!("For now, please use the two-step workflow:");
+    error!("  1. ros2 run dump_launch dump_launch <package> <launch_file>");
+    error!("  2. play_launch replay --input-file record.json");
+    std::process::exit(1);
+}
+
+/// Handle the 'run' subcommand (dump + replay)
+fn handle_run(_args: &options::RunArgs, _common: &options::CommonOptions) -> eyre::Result<()> {
+    error!("The 'run' subcommand is not yet implemented.");
+    error!("This will be implemented in Phase 2 of the roadmap.");
+    error!("");
+    error!("For now, please use the two-step workflow:");
+    error!("  1. ros2 run dump_launch dump_launch <package> <exec>");
+    error!("  2. play_launch replay --input-file record.json");
+    std::process::exit(1);
+}
+
+/// Handle the 'dump' subcommand (dump only, no replay)
+fn handle_dump(_args: &options::DumpArgs) -> eyre::Result<()> {
+    error!("The 'dump' subcommand is not yet implemented.");
+    error!("This will be implemented in Phase 2 of the roadmap.");
+    error!("");
+    error!("For now, please use:");
+    error!("  ros2 run dump_launch dump_launch <package> <launch_file> --output <file>");
+    std::process::exit(1);
+}
+
+/// Handle the 'replay' subcommand (or no subcommand for backward compatibility)
+fn handle_replay(replay_args: Option<&options::ReplayArgs>, opts: &Options) -> eyre::Result<()> {
+    // Use input_file from ReplayArgs if provided, otherwise from CommonOptions
+    let input_file = if let Some(args) = replay_args {
+        &args.input_file
+    } else {
+        &PathBuf::from("record.json") // Default when no subcommand
+    };
+
+    if opts.common.print_shell {
+        generate_shell(input_file, &opts.common)?;
     } else {
         // Start ROS service discovery thread if service checking is enabled
-        if opts.wait_for_service_ready {
+        if opts.common.wait_for_service_ready {
             info!("Starting ROS service discovery thread for container readiness checking...");
-            if opts.service_ready_timeout_secs == 0 {
+            if opts.common.service_ready_timeout_secs == 0 {
                 info!("Container service readiness will wait indefinitely");
             } else {
                 info!(
                     "Container service readiness timeout: {}s",
-                    opts.service_ready_timeout_secs
+                    opts.common.service_ready_timeout_secs
                 );
             }
 
@@ -168,20 +236,20 @@ fn main() -> eyre::Result<()> {
         let runtime = Runtime::new()?;
 
         // Run the whole playing task in the runtime.
-        runtime.block_on(play(&opts))?;
+        runtime.block_on(play(input_file, &opts.common))?;
     }
 
     Ok(())
 }
 
 /// Generate shell script from the launch record.
-fn generate_shell(opts: &options::Options) -> eyre::Result<()> {
-    let log_dir = create_log_dir(&opts.log_dir)?;
+fn generate_shell(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
+    let log_dir = create_log_dir(&common.log_dir)?;
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
 
-    let launch_dump = load_launch_dump(&opts.input_file)
-        .wrap_err_with(|| format!("unable to read launch file {}", opts.input_file.display()))?;
+    let launch_dump = load_launch_dump(input_file)
+        .wrap_err_with(|| format!("unable to read launch file {}", input_file.display()))?;
 
     let process_records = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
     let process_shells = process_records
@@ -191,7 +259,7 @@ fn generate_shell(opts: &options::Options) -> eyre::Result<()> {
     let load_node_shells = launch_dump
         .load_node
         .par_iter()
-        .map(|request| request.to_shell(opts.standalone_composable_nodes));
+        .map(|request| request.to_shell(common.standalone_composable_nodes));
 
     let mut shells: Vec<_> = process_shells.chain(load_node_shells).collect();
     shells.par_sort_unstable();
@@ -217,21 +285,21 @@ impl Drop for CleanupGuard {
 }
 
 /// Play the launch according to the launch record.
-async fn play(opts: &options::Options) -> eyre::Result<()> {
+async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let _cleanup_guard = CleanupGuard;
 
     // Load runtime configuration
     let runtime_config = load_runtime_config(
-        opts.config.as_deref(),
-        opts.enable_monitoring,
-        opts.monitor_interval_ms,
+        common.config.as_deref(),
+        common.enable_monitoring,
+        common.monitor_interval_ms,
     )?;
 
-    let launch_dump = load_launch_dump(&opts.input_file)?;
+    let launch_dump = load_launch_dump(input_file)?;
 
     // Prepare directories
-    let log_dir = create_log_dir(&opts.log_dir)?;
+    let log_dir = create_log_dir(&common.log_dir)?;
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
@@ -331,18 +399,18 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
 
     // Create composable node execution configuration
     let composable_node_config = ComposableNodeExecutionConfig {
-        standalone_composable_nodes: opts.standalone_composable_nodes,
-        load_orphan_composable_nodes: opts.load_orphan_composable_nodes,
+        standalone_composable_nodes: common.standalone_composable_nodes,
+        load_orphan_composable_nodes: common.load_orphan_composable_nodes,
         spawn_config: SpawnComposableNodeConfig {
-            max_concurrent_spawn: opts.max_concurrent_load_node_spawn,
-            max_attempts: opts.load_node_attempts,
-            wait_timeout: Duration::from_millis(opts.load_node_timeout_millis),
+            max_concurrent_spawn: common.max_concurrent_load_node_spawn,
+            max_attempts: common.load_node_attempts,
+            wait_timeout: Duration::from_millis(common.load_node_timeout_millis),
         },
-        load_node_delay: Duration::from_millis(opts.delay_load_node_millis),
-        service_wait_config: if opts.wait_for_service_ready {
+        load_node_delay: Duration::from_millis(common.delay_load_node_millis),
+        service_wait_config: if common.wait_for_service_ready {
             Some(crate::container_readiness::ContainerWaitConfig::new(
-                opts.service_ready_timeout_secs,
-                opts.service_poll_interval_ms,
+                common.service_ready_timeout_secs,
+                common.service_poll_interval_ms,
             ))
         } else {
             None
