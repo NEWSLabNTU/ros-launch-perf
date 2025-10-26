@@ -17,6 +17,22 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
+/// Resolve a container name to absolute form.
+///
+/// ROS 2 performs automatic namespace resolution at runtime:
+/// - If the name starts with '/', it's already absolute - return as-is
+/// - Otherwise, it's relative - prepend '/' (assuming root namespace context)
+///
+/// This matches the behavior of rclpy's create_client() when resolving
+/// service names in the root namespace.
+fn resolve_container_name(name: &str) -> String {
+    if name.starts_with('/') {
+        name.to_string()
+    } else {
+        format!("/{}", name)
+    }
+}
+
 /// The options to spawn a composable node loading process.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnComposableNodeConfig {
@@ -153,16 +169,36 @@ pub fn spawn_or_load_composable_nodes(
         }
     } else {
         // Separate orphan and non-orphan composable nodes
+        // Try both exact match and resolved name (with namespace resolution)
         let (nice_load_node_contexts, orphan_load_node_contexts): (Vec<_>, Vec<_>) =
-            load_node_contexts.into_par_iter().partition_map(|context| {
-                use rayon::iter::Either;
+            load_node_contexts
+                .into_par_iter()
+                .partition_map(|mut context| {
+                    use rayon::iter::Either;
 
-                if container_names.contains(&context.record.target_container_name) {
-                    Either::Left(context)
-                } else {
+                    let target_name = &context.record.target_container_name;
+
+                    // Try exact match first
+                    if container_names.contains(target_name) {
+                        return Either::Left(context);
+                    }
+
+                    // Try with namespace resolution (e.g., "pointcloud_container" -> "/pointcloud_container")
+                    let resolved_name = resolve_container_name(target_name);
+                    if container_names.contains(&resolved_name) {
+                        debug!(
+                            "Resolved container name '{}' to '{}' for composable node '{}'",
+                            target_name, resolved_name, context.record.node_name
+                        );
+                        // Update the target_container_name to the resolved name
+                        // so subsequent code can use it consistently
+                        context.record.target_container_name = resolved_name;
+                        return Either::Left(context);
+                    }
+
+                    // No match found - it's an orphan
                     Either::Right(context)
-                }
-            });
+                });
 
         info!("node containers: {}", container_names.len());
         info!(
