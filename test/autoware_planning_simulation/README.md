@@ -17,6 +17,23 @@ This directory contains test scripts for `dump_launch` and `play_launch` with Au
    $HOME/autoware_map/sample-map-planning
    ```
 
+3. **(Optional) Install ros2systemd** for systemd-managed launches:
+   ```bash
+   # Install via pip
+   pip3 install ros2systemd
+
+   # Or install from source
+   git clone https://github.com/ros-sys/ros2systemd.git
+   cd ros2systemd
+   pip3 install -e .
+   ```
+
+   With ros2systemd, you can run Autoware as a systemd user service, which provides:
+   - Automatic process cleanup when stopping the service
+   - Log management via journalctl
+   - Service status monitoring
+   - No orphan ROS nodes after stopping
+
 ## Directory Structure
 
 ```
@@ -30,7 +47,6 @@ test/autoware_planning_simulation/
 ├── play_log/             # Execution logs and metrics (generated)
 └── scripts/              # Utility scripts
     ├── start-sim.sh                # Start simulator with play_launch
-    ├── start-sim-ros2-launch.sh    # Start simulator with ros2 launch (comparison)
     ├── test_autonomous_drive.py    # Autonomous driving test
     ├── plot_resource_usage.py      # Plot generation tool
     └── kill_orphan_nodes.sh        # Cleanup utility
@@ -47,8 +63,13 @@ make help
 # Start Autoware planning simulator with play_launch
 make start-sim
 
-# Start Autoware with standard ros2 launch (for comparison)
-make start-sim-ros2-launch
+# Start Autoware with ros2 systemd launch (runs as systemd user service)
+make start-sim-systemd
+
+# Manage the systemd service
+make status-sim-systemd    # Check service status
+make logs-sim-systemd      # View logs (follows in real-time)
+make stop-sim-systemd      # Stop the service
 
 # Run autonomous driving test (requires simulator running)
 make drive
@@ -61,6 +82,17 @@ make kill-orphans
 ```
 
 The Makefile automatically sources the Autoware environment from `autoware/install/setup.bash`.
+
+### Systemd Launch Benefits
+
+When using `make start-sim-systemd`, the launch runs as a systemd user service, which provides several advantages:
+
+1. **Automatic Cleanup**: All ROS nodes are properly terminated when the service is stopped (no orphan processes)
+2. **Log Management**: Logs are stored in journalctl and can be viewed with `make logs-sim-systemd`
+3. **Service Monitoring**: Check service status with `make status-sim-systemd`
+4. **Persistent Logs**: Logs are preserved even after the service stops
+
+The systemd service automatically handles environment setup (sources Autoware workspace) and CycloneDDS configuration.
 
 ### Using Scripts Directly
 
@@ -77,7 +109,6 @@ python3 scripts/test_autonomous_drive.py
 - `Makefile` - Build automation for Autoware tests
 - `cyclonedds.xml` - CycloneDDS configuration for localhost-only communication
 - `scripts/start-sim.sh` - Starts Autoware planning simulator with play_launch
-- `scripts/start-sim-ros2-launch.sh` - Starts Autoware with standard ros2 launch (for comparison)
 - `scripts/test_autonomous_drive.py` - Python script to automate autonomous driving test
 - `scripts/plot_resource_usage.py` - Resource usage plotting tool
 - `scripts/kill_orphan_nodes.sh` - Cleanup orphan ROS nodes
@@ -192,28 +223,55 @@ These conservative timeouts are appropriate for Autoware's large number of conta
 
 ## Comparison Testing
 
-To compare `play_launch` behavior with standard `ros2 launch`:
+To compare different launch methods:
 
 ```bash
 # Test with play_launch
 make start-sim
 
-# Test with standard ros2 launch (in a new terminal after killing play_launch)
-make start-sim-ros2-launch
+# Test with ros2 systemd launch (in a new terminal after killing play_launch)
+make start-sim-systemd
+
+# View systemd service logs
+make logs-sim-systemd
+
+# Stop the systemd service
+make stop-sim-systemd
 ```
 
-Both methods use the same:
+All methods use the same:
 - Autoware workspace (`autoware/`)
 - Map path configuration
 - CycloneDDS settings (`cyclonedds.xml`)
 
-This allows you to verify that `play_launch` produces equivalent behavior to the standard launch system.
+This allows you to verify that different launch methods produce equivalent behavior.
 
 ### DDS Configuration
 
-Both scripts use `cyclonedds.xml` which configures:
+All launch methods use `cyclonedds.xml` which configures:
 - Localhost-only communication (loopback interface)
 - 65.5KB max message size
 - 10MB socket buffer size
 
 The `CYCLONEDDS_URI` environment variable is set before launching to ensure all nodes use this configuration.
+
+### Systemd Service Details
+
+When using `make start-sim-systemd`, the service:
+- Runs as a user service (no sudo required)
+- Automatically sources `autoware/install/setup.bash`
+- Sets `CYCLONEDDS_URI` environment variable
+- Copies `DISPLAY` environment variable for GUI applications (e.g., rviz2)
+- Can be managed with standard systemd commands:
+  ```bash
+  # Check service status
+  systemctl --user status ros2-autoware-planning-sim
+
+  # View logs with journalctl
+  journalctl --user -u ros2-autoware-planning-sim -f
+
+  # Stop the service
+  systemctl --user stop ros2-autoware-planning-sim
+  ```
+
+The Makefile targets (`make status-sim-systemd`, `make logs-sim-systemd`, etc.) provide convenient wrappers around these commands.
