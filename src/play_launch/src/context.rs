@@ -190,10 +190,10 @@ impl NodeContext {
             output_dir,
         } = self;
 
-        let Some(exec_name) = &record.exec_name else {
+        let Some(_exec_name) = &record.exec_name else {
             bail!(r#"expect the "exec_name" field but not found"#);
         };
-        let Some(package) = &record.package else {
+        let Some(_package) = &record.package else {
             bail!(r#"expect the "package" field but not found"#);
         };
 
@@ -229,7 +229,12 @@ impl NodeContext {
         command.stdout(stdout_file);
         command.stderr(stderr_file);
 
-        let log_name = format!("NODE '{package}/{exec_name}'");
+        // Extract directory name from output_dir for log_name
+        let dir_name = output_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        let log_name = format!("NODE '{}'", dir_name);
         Ok(ExecutionContext {
             log_name,
             output_dir: output_dir.to_path_buf(),
@@ -503,7 +508,7 @@ pub fn prepare_composable_node_contexts(
             let metadata_json = serde_json::to_string_pretty(&metadata)?;
             fs::write(metadata_path, metadata_json)?;
 
-            let log_name = format!("COMPOSABLE_NODE '{package}/{plugin}'");
+            let log_name = format!("COMPOSABLE_NODE '{}'", dir_name);
             eyre::Ok(ComposableNodeContext {
                 record: (*record).clone(),
                 log_name,
