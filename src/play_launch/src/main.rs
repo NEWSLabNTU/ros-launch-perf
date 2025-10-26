@@ -267,7 +267,6 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
         let monitor_config = MonitorConfig {
             enabled: true,
             sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
-            log_dir: log_dir.clone(),
         };
         match spawn_monitor_thread(monitor_config, process_registry.clone(), nvml) {
             Ok(handle) => {

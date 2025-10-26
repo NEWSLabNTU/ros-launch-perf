@@ -65,10 +65,7 @@ fn build_name_map(names: Vec<String>) -> HashMap<String, Vec<String>> {
             format!("{}_{}", name, count)
         };
 
-        result
-            .entry(name.clone())
-            .or_insert_with(Vec::new)
-            .push(unique_name);
+        result.entry(name.clone()).or_default().push(unique_name);
     }
 
     result
@@ -313,7 +310,7 @@ pub fn prepare_node_contexts(
                 .unwrap_or("unknown");
 
             // Create flat directory structure
-            let output_dir = node_log_dir.join(&dir_name);
+            let output_dir = node_log_dir.join(dir_name);
             let params_files_dir = output_dir.join("params_files");
             fs::create_dir_all(&params_files_dir)?;
 

@@ -7,7 +7,7 @@ use nvml_wrapper::{
 use std::{
     collections::HashMap,
     fs::{self, File},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
     time::{Duration, SystemTime},
@@ -101,7 +101,6 @@ impl ProcessState {
 pub struct MonitorConfig {
     pub enabled: bool,
     pub sample_interval_ms: u64,
-    pub log_dir: PathBuf,
 }
 
 /// Previous sample for rate calculation
@@ -115,7 +114,6 @@ struct PreviousSample {
 /// Resource monitor with sysinfo and NVML integration
 pub struct ResourceMonitor {
     system: System,
-    log_dir: PathBuf,
     csv_writers: HashMap<u32, Writer<File>>, // PID -> CSV writer
     nvml: Option<Nvml>,
     gpu_device_count: u32,
@@ -172,7 +170,7 @@ fn find_subprocess_pids(_parent_pid: u32) -> Vec<u32> {
 }
 
 impl ResourceMonitor {
-    pub fn new(log_dir: PathBuf, nvml: Option<Nvml>) -> Result<Self> {
+    pub fn new(nvml: Option<Nvml>) -> Result<Self> {
         // Use System::new() instead of new_all() to avoid loading everything upfront
         // We'll refresh only the processes we need in the monitoring loop
 
@@ -191,7 +189,6 @@ impl ResourceMonitor {
 
         Ok(Self {
             system: System::new(),
-            log_dir,
             csv_writers: HashMap::new(),
             nvml,
             gpu_device_count,
@@ -440,7 +437,7 @@ impl ResourceMonitor {
         Ok((0, 0))
     }
 
-    fn write_csv(&mut self, output_dir: &PathBuf, metrics: &ResourceMetrics) -> Result<()> {
+    fn write_csv(&mut self, output_dir: &Path, metrics: &ResourceMetrics) -> Result<()> {
         let pid = metrics.pid;
 
         // Get or create CSV writer for this PID
@@ -566,7 +563,7 @@ impl ResourceMonitor {
         Ok(())
     }
 
-    fn get_csv_path(&self, output_dir: &PathBuf) -> Result<PathBuf> {
+    fn get_csv_path(&self, output_dir: &Path) -> Result<PathBuf> {
         // Create path: <output_dir>/metrics.csv
         let csv_path = output_dir.join("metrics.csv");
         Ok(csv_path)
@@ -584,7 +581,7 @@ pub fn spawn_monitor_thread(
     }
 
     let handle = thread::spawn(move || {
-        let mut monitor = match ResourceMonitor::new(config.log_dir.clone(), nvml) {
+        let mut monitor = match ResourceMonitor::new(nvml) {
             Ok(m) => m,
             Err(e) => {
                 warn!("Failed to create ResourceMonitor: {}", e);

@@ -360,7 +360,7 @@ fn parse_parameter_value(value: &str) -> Result<rcl_interfaces::msg::ParameterVa
 
 fn create_bool_parameter(value: bool) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL,
         bool_value: value,
         integer_value: 0,
         double_value: 0.0,
@@ -375,7 +375,7 @@ fn create_bool_parameter(value: bool) -> rcl_interfaces::msg::ParameterValue {
 
 fn create_integer_parameter(value: i64) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER,
         bool_value: false,
         integer_value: value,
         double_value: 0.0,
@@ -390,7 +390,7 @@ fn create_integer_parameter(value: i64) -> rcl_interfaces::msg::ParameterValue {
 
 fn create_double_parameter(value: f64) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE,
         bool_value: false,
         integer_value: 0,
         double_value: value,
@@ -405,7 +405,7 @@ fn create_double_parameter(value: f64) -> rcl_interfaces::msg::ParameterValue {
 
 fn create_string_parameter(value: &str) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING,
         bool_value: false,
         integer_value: 0,
         double_value: 0.0,
@@ -420,7 +420,7 @@ fn create_string_parameter(value: &str) -> rcl_interfaces::msg::ParameterValue {
 
 fn create_bool_array_parameter(values: Vec<bool>) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY,
         bool_value: false,
         integer_value: 0,
         double_value: 0.0,
@@ -435,7 +435,7 @@ fn create_bool_array_parameter(values: Vec<bool>) -> rcl_interfaces::msg::Parame
 
 fn create_integer_array_parameter(values: Vec<i64>) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY,
         bool_value: false,
         integer_value: 0,
         double_value: 0.0,
@@ -450,7 +450,7 @@ fn create_integer_array_parameter(values: Vec<i64>) -> rcl_interfaces::msg::Para
 
 fn create_double_array_parameter(values: Vec<f64>) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY,
         bool_value: false,
         integer_value: 0,
         double_value: 0.0,
@@ -465,7 +465,7 @@ fn create_double_array_parameter(values: Vec<f64>) -> rcl_interfaces::msg::Param
 
 fn create_string_array_parameter(values: Vec<String>) -> rcl_interfaces::msg::ParameterValue {
     rcl_interfaces::msg::ParameterValue {
-        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY as u8,
+        type_: rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY,
         bool_value: false,
         integer_value: 0,
         double_value: 0.0,
@@ -487,7 +487,7 @@ mod tests {
         let result = parse_parameter_value("true").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL
         );
         assert!(result.bool_value);
     }
@@ -497,7 +497,7 @@ mod tests {
         let result = parse_parameter_value("false").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL
         );
         assert!(!result.bool_value);
     }
@@ -507,7 +507,7 @@ mod tests {
         let result = parse_parameter_value("42").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER
         );
         assert_eq!(result.integer_value, 42);
     }
@@ -517,7 +517,7 @@ mod tests {
         let result = parse_parameter_value("-123").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER
         );
         assert_eq!(result.integer_value, -123);
     }
@@ -527,9 +527,9 @@ mod tests {
         let result = parse_parameter_value("3.14").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE
         );
-        assert!((result.double_value - 3.14).abs() < 0.0001);
+        assert!((result.double_value - std::f64::consts::PI).abs() < 0.0001);
     }
 
     #[test]
@@ -537,7 +537,7 @@ mod tests {
         let result = parse_parameter_value("hello world").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_STRING as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING
         );
         assert_eq!(result.string_value, "hello world");
     }
@@ -547,7 +547,7 @@ mod tests {
         let result = parse_parameter_value("[1, 2, 3, 4]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_INTEGER_ARRAY
         );
         assert_eq!(result.integer_array_value, vec![1, 2, 3, 4]);
     }
@@ -557,7 +557,7 @@ mod tests {
         let result = parse_parameter_value("[0.1, 0.3, 20.0, 30.0]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY
         );
         assert_eq!(result.double_array_value.len(), 4);
         assert!((result.double_array_value[0] - 0.1).abs() < 0.0001);
@@ -571,7 +571,7 @@ mod tests {
         let result = parse_parameter_value("[curbstone]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY
         );
         assert_eq!(result.string_array_value, vec!["curbstone"]);
     }
@@ -581,7 +581,7 @@ mod tests {
         let result = parse_parameter_value("[foo, bar, baz]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY
         );
         assert_eq!(result.string_array_value, vec!["foo", "bar", "baz"]);
     }
@@ -591,7 +591,7 @@ mod tests {
         let result = parse_parameter_value("[true, false, true]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_BOOL_ARRAY
         );
         assert_eq!(result.bool_array_value, vec![true, false, true]);
     }
@@ -601,7 +601,7 @@ mod tests {
         let result = parse_parameter_value("[]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY
         );
         assert!(result.string_array_value.is_empty());
     }
@@ -613,7 +613,7 @@ mod tests {
             parse_parameter_value("['topic_state_monitor_vector_map: map_topic_status']").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_STRING_ARRAY
         );
         assert_eq!(result.string_array_value.len(), 1);
         assert_eq!(
@@ -628,7 +628,7 @@ mod tests {
         let result = parse_parameter_value("[1, 2.5, 3]").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE_ARRAY
         );
         assert_eq!(result.double_array_value.len(), 3);
         assert!((result.double_array_value[0] - 1.0).abs() < 0.0001);
@@ -641,7 +641,7 @@ mod tests {
         let result = parse_parameter_value("1.5e-7").unwrap();
         assert_eq!(
             result.type_,
-            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE as u8
+            rcl_interfaces::msg::ParameterType::PARAMETER_DOUBLE
         );
         assert!((result.double_value - 1.5e-7).abs() < 1e-10);
     }
