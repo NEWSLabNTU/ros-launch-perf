@@ -112,22 +112,25 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
     }
 
 
-def load_all_metrics(metrics_dir: Path) -> Dict[str, Dict]:
-    """Load all CSV files from the metrics directory."""
+def load_all_metrics(log_dir: Path) -> Dict[str, Dict]:
+    """Load all metrics.csv files from node and load_node directories."""
     metrics = {}
-    csv_files = list(metrics_dir.glob("*.csv"))
+
+    # Find all metrics.csv files in node/ and load_node/ subdirectories
+    csv_files = []
+    for subdir in ["node", "load_node"]:
+        subdir_path = log_dir / subdir
+        if subdir_path.exists():
+            csv_files.extend(subdir_path.glob("*/metrics.csv"))
 
     if not csv_files:
-        raise FileNotFoundError(f"No CSV files found in {metrics_dir}")
+        raise FileNotFoundError(f"No metrics.csv files found in {log_dir}/node or {log_dir}/load_node")
 
-    print(f"Loading {len(csv_files)} CSV files...")
+    print(f"Loading {len(csv_files)} metrics.csv files...")
 
     for csv_path in csv_files:
-        node_name = csv_path.stem
-        if node_name.startswith("NODE '"):
-            node_name = node_name[6:]
-        if node_name.endswith("'"):
-            node_name = node_name[:-1]
+        # Use parent directory name as node name
+        node_name = csv_path.parent.name
 
         node_metrics = parse_csv_file(csv_path)
         if node_metrics:
@@ -545,13 +548,8 @@ def main():
     log_dir = args.log_dir if args.log_dir else find_latest_log_dir(args.base_log_dir)
     print(f"Using log directory: {log_dir}")
 
-    # Load metrics
-    metrics_dir = log_dir / "metrics"
-    if not metrics_dir.exists():
-        print(f"Error: Metrics directory not found: {metrics_dir}")
-        sys.exit(1)
-
-    metrics = load_all_metrics(metrics_dir)
+    # Load metrics from node/ and load_node/ subdirectories
+    metrics = load_all_metrics(log_dir)
     if not metrics:
         print("Error: No metrics data found")
         sys.exit(1)
