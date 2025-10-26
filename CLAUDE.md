@@ -103,6 +103,7 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
 
 5. **Composable Node Loading Strategy** (service-based only):
    - Nodes classified as "nice" (have matching container) or "orphan" (no matching container)
+   - **Namespace resolution**: Automatically resolves relative container names (e.g., `"pointcloud_container"`) to absolute names (e.g., `"/pointcloud_container"`) to match ROS 2 runtime behavior
    - Loading is concurrent with configurable `max_concurrent_load_node_spawn` (default: 10)
    - Component loader thread handles direct rclrs service calls to `composition_interfaces/srv/LoadNode`
    - Service clients cached per container for efficient reuse
@@ -169,25 +170,77 @@ play_launch accepts these options (play_launch/src/options.rs):
 
 ## Log Directory Structure
 
-After running `play_launch`, logs are organized as:
+After running `play_launch`, logs are organized with a **flat 1-level structure** for easy scripting:
 ```
 play_log/
 ├── YYYY-MM-DD_HH-MM-SS/   # Timestamped log directory for each run
 │   ├── params_files/      # Cached parameter files from record.json
-│   ├── node/              # Regular node logs
-│   │   └── <package>/<exec_name>/
-│   │       ├── out        # stdout
-│   │       ├── err        # stderr
-│   │       ├── pid        # process ID
-│   │       ├── status     # exit code
-│   │       └── cmdline    # executed command
-│   ├── load_node/         # Composable node logs
-│   │   └── <container>/<package>/<plugin>/
-│   │       ├── service_response.<round>  # LoadNode service response
-│   │       └── status                    # final status (0=success, 1=failure)
-│   └── metrics/           # Resource monitoring (when enabled)
-│       └── <node_name>.csv  # Per-node/container resource metrics (25 columns)
-│           # See Phase 2 section below for complete CSV column list
+│   ├── node/              # Regular node logs (flat structure)
+│   │   └── <node_name>/   # Short node name (deduplicated with _2, _3 suffixes if needed)
+│   │       ├── metadata.json  # Node metadata (package, namespace, container info)
+│   │       ├── metrics.csv    # Resource metrics (when monitoring enabled)
+│   │       ├── out            # stdout
+│   │       ├── err            # stderr
+│   │       ├── pid            # process ID
+│   │       ├── status         # exit code
+│   │       ├── cmdline        # executed command
+│   │       └── params_files/  # Node-specific parameter files
+│   └── load_node/         # Composable node logs (flat structure)
+│       └── <node_name>/   # Short node name (deduplicated if needed)
+│           ├── metadata.json  # Composable node metadata (plugin, target container, etc.)
+│           ├── metrics.csv    # Resource metrics (when monitoring enabled)
+│           ├── service_response.<round>  # LoadNode service response
+│           └── status         # final status (0=success, 1=failure)
+```
+
+**Key Features:**
+- **Flat Structure**: All node directories are at a single level for consistent scripting
+- **Short Names**: Directory names use node names (e.g., `control_evaluator`) instead of lengthy package paths
+- **Name Deduplication**: Duplicate names get numeric suffixes (e.g., `container_2`, `glog_component_3`)
+- **Metadata Files**: Each node has `metadata.json` with full context (package, namespace, container info)
+- **Self-Contained**: Each node directory contains all its data including metrics
+- **Log Names Match Directories**: Log messages show short names matching directory names (e.g., `NODE 'rviz2'`)
+
+**Metadata JSON Examples:**
+
+Regular node (`node/control_evaluator/metadata.json`):
+```json
+{
+  "type": "node",
+  "package": "autoware_control_evaluator",
+  "executable": "control_evaluator",
+  "exec_name": "control_evaluator-41",
+  "name": "control_evaluator",
+  "namespace": "/control",
+  "is_container": false
+}
+```
+
+Container (`node/control_container/metadata.json`):
+```json
+{
+  "type": "container",
+  "package": "rclcpp_components",
+  "executable": "component_container_mt",
+  "exec_name": "component_container_mt-39",
+  "name": "control_container",
+  "namespace": "/control",
+  "is_container": true,
+  "container_full_name": "/control/control_container"
+}
+```
+
+Composable node (`load_node/vehicle_cmd_gate/metadata.json`):
+```json
+{
+  "type": "composable_node",
+  "package": "autoware_vehicle_cmd_gate",
+  "plugin": "autoware::vehicle_cmd_gate::VehicleCmdGate",
+  "node_name": "vehicle_cmd_gate",
+  "namespace": "/control",
+  "target_container_name": "/control/control_container",
+  "target_container_node_name": "control_container"
+}
 ```
 
 ## Dependencies
@@ -493,6 +546,97 @@ python3 scripts/plot_resource_usage.py --output-dir custom_plots
 - See `docs/resource-monitoring-design.md` for complete roadmap
 
 ## Recent Changes
+
+### 2025-10-27: Namespace Resolution for Composable Nodes
+
+**Problem Identified:**
+- Autoware planning simulator had 2 composable nodes classified as "orphans" despite loading successfully with standard `ros2 launch`
+- `pointcloud_to_laserscan_node` and `occupancy_grid_map_node` targeted `"pointcloud_container"` (relative name)
+- Container was registered as `"/pointcloud_container"` (absolute name)
+- ROS 2 runtime automatically resolves relative names to absolute at runtime, but play_launch was doing exact string matching
+- This resulted in false-positive orphan warnings
+
+**Root Cause:**
+- dump_launch correctly captured literal `target_container_name` values from launch files (relative names)
+- ROS 2's `create_client()` performs automatic namespace resolution that wasn't being replicated in play_launch
+- When a LoadComposableNodes action runs in root namespace, rclpy expands relative service names to absolute
+
+**Solution:**
+- Added `resolve_container_name()` function in execution.rs (lines 20-34) mimicking ROS 2's namespace resolution
+- Updated composable node classification logic (lines 171-201) to try both exact match and resolved names
+- When resolved name matches, updates the record's `target_container_name` to use resolved name consistently
+- Logs debug message when namespace resolution occurs
+
+**Implementation:**
+```rust
+fn resolve_container_name(name: &str) -> String {
+    if name.starts_with('/') {
+        name.to_string()  // Already absolute
+    } else {
+        format!("/{}", name)  // Convert relative to absolute
+    }
+}
+```
+
+**Files Modified:**
+- `src/play_launch/src/execution.rs`: Added namespace resolution function and updated matching logic
+
+**Testing:**
+- Tested with Autoware planning simulator (15 containers, 54 composable nodes)
+- All composable nodes now correctly matched to containers
+- **Zero orphan warnings** (previously 2 false-positive orphans)
+- `pointcloud_to_laserscan_node` and `occupancy_grid_map_node` successfully load with `success: true` in service response
+- Autoware autonomous driving test now functional
+
+**Impact:**
+- ✅ Eliminates false-positive orphan warnings for launch files using relative container names
+- ✅ Matches ROS 2 runtime behavior for better compatibility
+- ✅ Maintains backward compatibility with launch files already using absolute names
+- ✅ Enables Autoware autonomous driving integration testing
+
+### 2025-10-26: Log Directory Structure Refactoring
+
+**Changes Made:**
+- **Flat Directory Structure**: Redesigned node and composable node directories from multi-level hierarchy to flat single-level structure
+  - Old: `node/autoware_control_evaluator/control_evaluator-41/`
+  - New: `node/control_evaluator/`
+  - Old: `load_node/@control@control_container/autoware_vehicle_cmd_gate/VehicleCmdGate/`
+  - New: `load_node/vehicle_cmd_gate/`
+
+- **Short Log Names**: Updated log messages to use short directory names
+  - Old: `NODE 'autoware_control_evaluator/control_evaluator-41'`
+  - New: `NODE 'control_evaluator'`
+
+- **Metadata Files**: Added `metadata.json` in each node/composable node directory with full context
+  - Package, executable, namespace information
+  - Container identification (`is_container`, `container_full_name`)
+  - Target container info for composable nodes
+
+- **Name Deduplication**: Implemented automatic handling of duplicate node names with numeric suffixes
+  - Examples: `container_2`, `container_3`, `glog_component_4`
+
+- **Per-Node Metrics**: Moved resource monitoring from centralized `metrics/` to per-node `metrics.csv`
+  - Old: `metrics/NODE 'control_evaluator'.csv`
+  - New: `node/control_evaluator/metrics.csv`
+
+- **Updated Plotting Script**: Modified `plot_resource_usage.py` to recursively search `node/*/metrics.csv` and `load_node/*/metrics.csv`
+
+**Benefits:**
+- **Script-Friendly**: Consistent 1-level depth makes scripting and automation easier
+- **Self-Contained**: Each node directory contains all its data (logs, metrics, metadata)
+- **Better Correlation**: Short names in logs directly match directory names
+- **Metadata Preservation**: Full context preserved in JSON files despite short directory names
+
+**Files Modified:**
+- `src/play_launch/src/context.rs`: Added metadata generation, flat structure, deduplication
+- `src/play_launch/src/resource_monitor.rs`: Changed to write per-node metrics.csv
+- `src/play_launch/src/execution.rs`: Updated process registry to use PathBuf
+- `src/play_launch/src/main.rs`: Updated process registry initialization
+- `test/autoware_planning_simulation/scripts/plot_resource_usage.py`: Updated to find metrics in new locations
+
+**Testing:**
+- Successfully tested with Autoware planning simulator (61 nodes + composable nodes)
+- All metrics collection and plotting working correctly
 
 ### 2025-10-25: AMENT_PREFIX_PATH Environment Inheritance Fix
 
