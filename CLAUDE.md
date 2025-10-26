@@ -8,6 +8,7 @@ ROS2 Launch Inspection Tool - A dual-component system for recording and replayin
 
 1. **dump_launch** (Python): Records ROS 2 launch file execution and generates `record.json`
 2. **play_launch** (Rust): Replays the recorded launch execution from `record.json`
+3. **play_launch_wrapper** (CMake): Provides a wrapper script to run `play_launch` directly from PATH
 
 ## Build & Install
 
@@ -42,22 +43,29 @@ Installs ROS dependencies using rosdep.
 
 ### Running the Tools
 
-After sourcing the workspace, use ROS commands to run the tools:
+After sourcing the workspace, you can run the tools directly:
 
 Record a launch execution:
 ```sh
 ros2 run dump_launch dump_launch <package> <launch_file> [args...]
 ```
 
-Replay the recorded launch:
+Replay the recorded launch (using wrapper):
+```sh
+play_launch [options]
+```
+
+Or use the full ROS command:
 ```sh
 ros2 run play_launch play_launch [options]
 ```
 
 Generate shell script from record:
 ```sh
-ros2 run play_launch play_launch --print-shell > launch.sh
+play_launch --print-shell > launch.sh
 ```
+
+**Note**: The `play_launch` command is available in PATH thanks to the `play_launch_wrapper` package, which provides a convenience wrapper around `ros2 run play_launch play_launch`.
 
 ### Testing & Profiling
 
@@ -118,6 +126,32 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
    - Configurable timeout via `--service-ready-timeout-secs` (default: 120s)
 
 7. **Logging**: All node stdout/stderr, PIDs, status codes saved to `play_log/node/` and `play_log/load_node/`
+
+### play_launch_wrapper Package
+
+The `play_launch_wrapper` is a simple ament_cmake package that provides a wrapper script to run `play_launch` directly from PATH without needing the full `ros2 run` command.
+
+**Package Structure**:
+```
+src/play_launch_wrapper/
+├── CMakeLists.txt               # Simple CMake package
+├── package.xml                  # ROS package metadata
+├── hooks/
+│   └── play_launch_path.dsv.in  # Environment hook to add wrapper to PATH
+└── scripts/
+    └── play_launch              # Wrapper script: exec ros2 run play_launch play_launch "$@"
+```
+
+**How it works**:
+1. The wrapper script forwards all arguments to `ros2 run play_launch play_launch`
+2. `ament_environment_hooks()` in CMakeLists.txt registers the DSV hook
+3. The DSV hook adds `install/play_launch_wrapper/lib/play_launch_wrapper` to PATH
+4. After sourcing the workspace, `play_launch` is available as a command
+
+**Why this approach**:
+- ament_cargo (used by play_launch) doesn't support environment hooks in Cargo.toml
+- Creating a separate CMake package with ament_environment_hooks() is the standard ROS pattern
+- Cleaner than post-build scripts and survives rebuilds automatically
 
 ### Key Rust Modules
 
