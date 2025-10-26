@@ -31,8 +31,6 @@ type GpuMetricsTuple = (
 pub struct ResourceMetrics {
     pub timestamp: SystemTime,
     pub pid: u32,
-    #[allow(dead_code)] // Used in CSV output
-    pub node_name: String,
 
     // CPU metrics
     pub cpu_percent: f64,
@@ -118,7 +116,7 @@ struct PreviousSample {
 pub struct ResourceMonitor {
     system: System,
     log_dir: PathBuf,
-    csv_writers: HashMap<String, Writer<File>>,
+    csv_writers: HashMap<u32, Writer<File>>, // PID -> CSV writer
     nvml: Option<Nvml>,
     gpu_device_count: u32,
     previous_samples: HashMap<u32, PreviousSample>, // PID -> previous I/O sample
@@ -201,7 +199,7 @@ impl ResourceMonitor {
         })
     }
 
-    fn collect_metrics(&mut self, pid: u32, node_name: &str) -> Result<ResourceMetrics> {
+    fn collect_metrics(&mut self, pid: u32) -> Result<ResourceMetrics> {
         let pid_obj = Pid::from_u32(pid);
 
         // Get process from system
@@ -312,7 +310,6 @@ impl ResourceMonitor {
         Ok(ResourceMetrics {
             timestamp: current_time,
             pid,
-            node_name: node_name.to_string(),
             cpu_percent,
             cpu_user_time,
             rss_bytes,
@@ -443,10 +440,12 @@ impl ResourceMonitor {
         Ok((0, 0))
     }
 
-    fn write_csv(&mut self, node_name: &str, metrics: &ResourceMetrics) -> Result<()> {
-        // Get or create CSV writer for this node
-        if !self.csv_writers.contains_key(node_name) {
-            let csv_path = self.get_csv_path(node_name)?;
+    fn write_csv(&mut self, output_dir: &PathBuf, metrics: &ResourceMetrics) -> Result<()> {
+        let pid = metrics.pid;
+
+        // Get or create CSV writer for this PID
+        if !self.csv_writers.contains_key(&pid) {
+            let csv_path = self.get_csv_path(output_dir)?;
 
             // Create parent directories
             if let Some(parent) = csv_path.parent() {
@@ -491,13 +490,13 @@ impl ResourceMonitor {
                 .wrap_err("Failed to write CSV header")?;
 
             writer.flush().wrap_err("Failed to flush CSV header")?;
-            self.csv_writers.insert(node_name.to_string(), writer);
+            self.csv_writers.insert(pid, writer);
         }
 
         let writer = self
             .csv_writers
-            .get_mut(node_name)
-            .ok_or_else(|| eyre::eyre!("CSV writer not found for {}", node_name))?;
+            .get_mut(&pid)
+            .ok_or_else(|| eyre::eyre!("CSV writer not found for PID {}", pid))?;
 
         // Format timestamp
         let timestamp_str = format_timestamp(metrics.timestamp);
@@ -558,22 +557,18 @@ impl ResourceMonitor {
                 metrics.tcp_connections.to_string(),
                 metrics.udp_connections.to_string(),
             ])
-            .wrap_err_with(|| format!("Failed to write CSV row for {}", node_name))?;
+            .wrap_err_with(|| format!("Failed to write CSV row for PID {}", pid))?;
 
         writer
             .flush()
-            .wrap_err_with(|| format!("Failed to flush CSV for {}", node_name))?;
+            .wrap_err_with(|| format!("Failed to flush CSV for PID {}", pid))?;
 
         Ok(())
     }
 
-    fn get_csv_path(&self, node_name: &str) -> Result<PathBuf> {
-        // Create path: metrics/<sanitized_node_name>.csv
-        let sanitized = sanitize_node_name(node_name);
-        let csv_path = self
-            .log_dir
-            .join("metrics")
-            .join(format!("{}.csv", sanitized));
+    fn get_csv_path(&self, output_dir: &PathBuf) -> Result<PathBuf> {
+        // Create path: <output_dir>/metrics.csv
+        let csv_path = output_dir.join("metrics.csv");
         Ok(csv_path)
     }
 }
@@ -581,7 +576,7 @@ impl ResourceMonitor {
 /// Spawn monitoring thread
 pub fn spawn_monitor_thread(
     config: MonitorConfig,
-    process_registry: Arc<Mutex<HashMap<u32, String>>>,
+    process_registry: Arc<Mutex<HashMap<u32, PathBuf>>>,
     nvml: Option<Nvml>,
 ) -> Result<JoinHandle<()>> {
     if !config.enabled {
@@ -617,17 +612,24 @@ pub fn spawn_monitor_thread(
                     .refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids_to_refresh), true);
             }
 
-            for (pid, node_name) in processes {
-                match monitor.collect_metrics(pid, &node_name) {
+            for (pid, output_dir) in processes {
+                match monitor.collect_metrics(pid) {
                     Ok(metrics) => {
-                        if let Err(e) = monitor.write_csv(&node_name, &metrics) {
-                            warn!("Failed to write metrics for {}: {}", node_name, e);
+                        if let Err(e) = monitor.write_csv(&output_dir, &metrics) {
+                            warn!(
+                                "Failed to write metrics for PID {} ({}): {}",
+                                pid,
+                                output_dir.display(),
+                                e
+                            );
                         }
                     }
                     Err(e) => {
                         debug!(
-                            "Failed to collect metrics for {} (pid {}): {}",
-                            node_name, pid, e
+                            "Failed to collect metrics for PID {} ({}): {}",
+                            pid,
+                            output_dir.display(),
+                            e
                         );
                         // Process may have exited, we'll keep trying in case it comes back
                     }
@@ -657,24 +659,9 @@ fn format_timestamp(time: SystemTime) -> String {
     }
 }
 
-/// Sanitize node name for use in file paths
-fn sanitize_node_name(node_name: &str) -> String {
-    node_name.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_sanitize_node_name() {
-        assert_eq!(
-            sanitize_node_name("/planning/behavior"),
-            "_planning_behavior"
-        );
-        assert_eq!(sanitize_node_name("simple_node"), "simple_node");
-        assert_eq!(sanitize_node_name("/a/b/c"), "_a_b_c");
-    }
 
     #[test]
     fn test_format_timestamp() {

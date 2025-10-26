@@ -262,7 +262,7 @@ async fn play(opts: &options::Options) -> eyre::Result<()> {
     };
 
     // Initialize monitoring if enabled
-    let process_registry = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
+    let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
     let _monitor_thread = if runtime_config.monitoring.enabled {
         let monitor_config = MonitorConfig {
             enabled: true,

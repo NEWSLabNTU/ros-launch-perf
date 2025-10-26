@@ -10,7 +10,7 @@ use std::{
     fs::File,
     future::Future,
     io::prelude::*,
-    path::Path,
+    path::{Path, PathBuf},
     process::ExitStatus,
     sync::{Arc, Mutex},
     time::Duration,
@@ -34,7 +34,7 @@ pub struct ComposableNodeExecutionConfig {
     pub load_node_delay: Duration,
     pub service_wait_config: Option<crate::container_readiness::ContainerWaitConfig>,
     pub component_loader: Option<crate::component_loader::ComponentLoaderHandle>,
-    pub process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    pub process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     pub process_configs: Vec<crate::config::ProcessConfig>,
 }
 
@@ -66,7 +66,7 @@ pub enum ComposableNodeTasks {
 /// Spawn ROS node processes.
 pub fn spawn_nodes(
     node_contexts: Vec<NodeContext>,
-    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     node_contexts
         .into_iter()
@@ -97,20 +97,28 @@ pub fn spawn_nodes(
             if let Some(ref registry) = process_registry {
                 if let Some(pid) = child.id() {
                     if let Ok(mut reg) = registry.lock() {
-                        reg.insert(pid, log_name.clone());
-                        debug!("Registered PID {} for node {}", pid, log_name);
+                        reg.insert(pid, output_dir.clone());
+                        debug!(
+                            "Registered PID {} for node {} ({})",
+                            pid,
+                            log_name,
+                            output_dir.display()
+                        );
                     }
                 }
             }
 
             let registry_clone = process_registry.clone();
-            let log_name_clone = log_name.clone();
+            let pid_to_remove = child.id();
             let task = async move {
                 let result = wait_for_node(&log_name, &output_dir, child).await;
                 // Unregister PID when process exits
                 if let Some(registry) = registry_clone {
-                    if let Ok(mut reg) = registry.lock() {
-                        reg.retain(|_, name| name != &log_name_clone);
+                    if let Some(pid) = pid_to_remove {
+                        if let Ok(mut reg) = registry.lock() {
+                            reg.remove(&pid);
+                            debug!("Unregistered PID {} for node {}", pid, log_name);
+                        }
                     }
                 }
                 result
@@ -260,7 +268,7 @@ fn build_container_groups(
 /// Spawn all node containers in each container group.
 fn spawn_node_containers(
     container_groups: HashMap<String, NodeContainerGroup>,
-    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     process_configs: Vec<crate::config::ProcessConfig>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
@@ -315,8 +323,13 @@ fn spawn_node_containers(
                     // Register PID for monitoring
                     if let Some(ref registry) = process_registry {
                         if let Ok(mut reg) = registry.lock() {
-                            reg.insert(pid, log_name.clone());
-                            debug!("Registered container PID {} for node {}", pid, log_name);
+                            reg.insert(pid, output_dir.clone());
+                            debug!(
+                                "Registered container PID {} for node {} ({})",
+                                pid,
+                                log_name,
+                                output_dir.display()
+                            );
                         }
                     }
 
@@ -340,13 +353,16 @@ fn spawn_node_containers(
                 }
 
                 let registry_clone = process_registry.clone();
-                let log_name_clone = log_name.clone();
+                let pid_to_remove = child.id();
                 let task = async move {
                     let result = wait_for_node(&log_name, &output_dir, child).await;
                     // Unregister PID when container exits
                     if let Some(registry) = registry_clone {
-                        if let Ok(mut reg) = registry.lock() {
-                            reg.retain(|_, name| name != &log_name_clone);
+                        if let Some(pid) = pid_to_remove {
+                            if let Ok(mut reg) = registry.lock() {
+                                reg.remove(&pid);
+                                debug!("Unregistered container PID {} for node {}", pid, log_name);
+                            }
                         }
                     }
                     result
@@ -519,7 +535,7 @@ fn spawn_node_containers_and_load_composable_nodes(
 /// Spawn standalone composable nodes.
 fn spawn_standalone_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
-    process_registry: Option<Arc<Mutex<HashMap<u32, String>>>>,
+    process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     process_configs: Vec<crate::config::ProcessConfig>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     load_node_contexts
@@ -552,8 +568,8 @@ fn spawn_standalone_composable_nodes(
                 // Register PID for monitoring
                 if let Some(ref registry) = process_registry {
                     if let Ok(mut reg) = registry.lock() {
-                        reg.insert(pid, log_name.clone());
-                        debug!("Registered standalone composable node PID {} for {}", pid, log_name);
+                        reg.insert(pid, output_dir.clone());
+                        debug!("Registered standalone composable node PID {} for {} ({})", pid, log_name, output_dir.display());
                     }
                 }
 
@@ -574,7 +590,7 @@ fn spawn_standalone_composable_nodes(
             }
 
             let registry_clone = process_registry.clone();
-            let log_name_clone = log_name.clone();
+            let pid_to_remove = child.id();
             let task = async move {
                 let ComposableNodeContext {
                     log_name,
@@ -584,8 +600,11 @@ fn spawn_standalone_composable_nodes(
                 let result = wait_for_node(log_name, output_dir, child).await;
                 // Unregister PID when process exits
                 if let Some(registry) = registry_clone {
-                    if let Ok(mut reg) = registry.lock() {
-                        reg.retain(|_, name| name != &log_name_clone);
+                    if let Some(pid) = pid_to_remove {
+                        if let Ok(mut reg) = registry.lock() {
+                            reg.remove(&pid);
+                            debug!("Unregistered standalone composable node PID {} for {}", pid, log_name);
+                        }
                     }
                 }
                 result
