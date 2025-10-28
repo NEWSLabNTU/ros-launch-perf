@@ -50,6 +50,7 @@ pub struct NodeRecord {
     pub ros_args: Option<Vec<String>>,
     pub args: Option<Vec<String>>,
     pub cmd: Vec<String>,
+    pub env: Option<Vec<(String, String)>>,
 }
 
 /// The serialization format for a composable node record.
@@ -70,6 +71,8 @@ pub struct ComposableNodeRecord {
 
     #[serde(default)]
     pub extra_args: HashMap<String, String>,
+
+    pub env: Option<Vec<(String, String)>>,
 }
 
 impl ComposableNodeRecord {
@@ -92,6 +95,7 @@ impl ComposableNodeRecord {
             extra_args: _,
             node_name,
             target_container_name: _,
+            env: _,
         } = self;
 
         // Option A: Spawn standalone container directly using ament index
@@ -148,6 +152,7 @@ impl ComposableNodeRecord {
             extra_args,
             target_container_name,
             node_name,
+            env: _,
         } = self;
 
         let command = [
@@ -218,8 +223,18 @@ impl ComposableNodeRecord {
 
 /// Read an deserialize the launch record dump.
 pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
-    let reader = BufReader::new(File::open(dump_file)?);
-    let launch_dump = serde_json::from_reader(reader)?;
+    use tracing::info;
+
+    info!("Opening file: {}", dump_file.display());
+    let file = File::open(dump_file)?;
+    info!("File opened successfully, creating buffered reader...");
+
+    let reader = BufReader::new(file);
+    info!("Buffered reader created, starting JSON deserialization...");
+
+    let launch_dump: LaunchDump = serde_json::from_reader(reader)?;
+    info!("JSON deserialization complete!");
+
     Ok(launch_dump)
 }
 

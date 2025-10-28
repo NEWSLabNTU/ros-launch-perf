@@ -23,6 +23,7 @@ pub struct NodeCommandLine {
     pub rosout_logs: Option<bool>,
     pub stdout_logs: Option<bool>,
     pub enclave: Option<String>,
+    pub env: HashMap<String, String>,
 }
 
 impl NodeCommandLine {
@@ -40,6 +41,7 @@ impl NodeCommandLine {
             args: user_nonros_args,
             exec_name: _,
             cmd: _,
+            env,
         } = record;
 
         let Some(package) = package else {
@@ -100,6 +102,15 @@ impl NodeCommandLine {
             })
             .try_collect()?;
 
+        let env: HashMap<_, _> = env
+            .as_ref()
+            .map(|vec| {
+                vec.iter()
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             command,
             user_args,
@@ -111,6 +122,7 @@ impl NodeCommandLine {
             rosout_logs: None,
             stdout_logs: None,
             enclave: None,
+            env,
         })
     }
 
@@ -242,6 +254,7 @@ impl NodeCommandLine {
             rosout_logs,
             stdout_logs,
             enclave,
+            env: HashMap::new(),
         })
     }
 
@@ -258,6 +271,7 @@ impl NodeCommandLine {
             rosout_logs,
             stdout_logs,
             enclave,
+            env: _,
         } = self;
 
         let has_ros_args = !(remaps.is_empty()
@@ -366,6 +380,9 @@ impl NodeCommandLine {
             .expect("command line must not be empty");
         let mut command = Command::new(program);
         command.args(args);
+
+        // Apply environment variables from launch file
+        command.envs(&self.env);
 
         // Explicitly preserve AMENT_PREFIX_PATH to ensure containers have access to all workspaces
         // This is critical for ament index lookups when loading composable nodes
