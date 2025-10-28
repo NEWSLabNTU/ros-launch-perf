@@ -97,9 +97,14 @@ test:
 .PHONY: lint
 lint:
 	@echo "Running Rust clippy..."
-	@cd src/play_launch && cargo clippy --all-targets --all-features -- -D warnings
+	@. install/setup.sh && \
+	cargo clippy --all-targets --all-features -- -D warnings
+
 	@echo "Running Python ruff checks..."
-	@cd src/dump_launch && python3 -m ruff check .
+	@. install/setup.sh && \
+	cd src/dump_launch && \
+	python3 -m ruff check .
+
 	@echo "Lint checks passed!"
 
 .PHONY: format
