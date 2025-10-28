@@ -28,6 +28,7 @@ help:
 	@echo "Other:"
 	@echo "  drive              - Run autonomous driving test"
 	@echo "  start-sim-and-drive - Run complete test sequence (launch + autonomous test)"
+	@echo "  plot               - Generate resource usage plots from latest play_log"
 	@echo "  kill-orphans       - Kill orphan ROS nodes"
 	@echo "  check-autoware     - Verify Autoware installation"
 	@echo ""
@@ -111,6 +112,11 @@ start-sim-and-drive: check-autoware
 	SERVICE_TIMEOUT=$(SERVICE_TIMEOUT) \
 	LOAD_TIMEOUT=$(LOAD_TIMEOUT) \
 	./scripts/start-sim-and-drive.sh
+
+.PHONY: plot
+plot:
+	@echo "Generating resource usage plots from latest play_log..."
+	@python3 scripts/plot_resource_usage.py
 
 .PHONY: kill-orphans
 kill-orphans:
