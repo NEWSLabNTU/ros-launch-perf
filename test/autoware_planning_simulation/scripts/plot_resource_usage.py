@@ -50,6 +50,11 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
     rss_bytes = []
     gpu_mem_bytes = []
     gpu_util_percents = []
+    gpu_mem_util_percents = []
+    gpu_temps = []
+    gpu_powers = []
+    gpu_graphics_clocks = []
+    gpu_memory_clocks = []
     io_read_rates = []
     io_write_rates = []
     tcp_conns = []
@@ -63,19 +68,36 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
             cpu_percents.append(float(row["cpu_percent"]))
             rss_bytes.append(int(row["rss_bytes"]))
 
-            # Parse optional fields
+            # Parse optional GPU fields
             gpu_mem_str = row.get("gpu_memory_bytes", "").strip()
             gpu_mem_bytes.append(int(gpu_mem_str) if gpu_mem_str else None)
 
             gpu_util_str = row.get("gpu_utilization_percent", "").strip()
             gpu_util_percents.append(int(gpu_util_str) if gpu_util_str else None)
 
+            gpu_mem_util_str = row.get("gpu_memory_utilization_percent", "").strip()
+            gpu_mem_util_percents.append(int(gpu_mem_util_str) if gpu_mem_util_str else None)
+
+            gpu_temp_str = row.get("gpu_temperature_celsius", "").strip()
+            gpu_temps.append(int(gpu_temp_str) if gpu_temp_str else None)
+
+            gpu_power_str = row.get("gpu_power_milliwatts", "").strip()
+            gpu_powers.append(int(gpu_power_str) if gpu_power_str else None)
+
+            gpu_graphics_clock_str = row.get("gpu_graphics_clock_mhz", "").strip()
+            gpu_graphics_clocks.append(int(gpu_graphics_clock_str) if gpu_graphics_clock_str else None)
+
+            gpu_memory_clock_str = row.get("gpu_memory_clock_mhz", "").strip()
+            gpu_memory_clocks.append(int(gpu_memory_clock_str) if gpu_memory_clock_str else None)
+
+            # Parse I/O rate fields
             read_rate_str = row.get("total_read_rate_bps", "").strip()
             io_read_rates.append(float(read_rate_str) if read_rate_str else None)
 
             write_rate_str = row.get("total_write_rate_bps", "").strip()
             io_write_rates.append(float(write_rate_str) if write_rate_str else None)
 
+            # Parse network connection fields
             tcp_str = row.get("tcp_connections", "0").strip()
             tcp_conns.append(int(tcp_str) if tcp_str else 0)
 
@@ -92,6 +114,9 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
     gpu_mem_mb = [
         (gm / (1024 * 1024)) if gm is not None else None for gm in gpu_mem_bytes
     ]
+    gpu_power_watts = [
+        (power / 1000.0) if power is not None else None for power in gpu_powers
+    ]
     io_read_mb_s = [
         (rate / (1024 * 1024)) if rate is not None else None for rate in io_read_rates
     ]
@@ -105,6 +130,11 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
         "mem": rss_mb,
         "gpu_mem": gpu_mem_mb,
         "gpu_util": gpu_util_percents,
+        "gpu_mem_util": gpu_mem_util_percents,
+        "gpu_temp": gpu_temps,
+        "gpu_power": gpu_power_watts,
+        "gpu_graphics_clock": gpu_graphics_clocks,
+        "gpu_memory_clock": gpu_memory_clocks,
         "io_read_rate": io_read_mb_s,
         "io_write_rate": io_write_mb_s,
         "tcp_conns": tcp_conns,
@@ -141,9 +171,16 @@ def load_all_metrics(log_dir: Path) -> Dict[str, Dict]:
 
 
 def has_gpu_data(metrics: Dict[str, Dict]) -> bool:
-    """Check if any node has GPU data."""
+    """Check if any node has GPU data (any GPU metric)."""
     for node_data in metrics.values():
-        if any(g is not None for g in node_data["gpu_mem"]):
+        # Check all GPU metric fields
+        if (any(g is not None for g in node_data["gpu_mem"]) or
+            any(g is not None for g in node_data["gpu_util"]) or
+            any(g is not None for g in node_data["gpu_mem_util"]) or
+            any(g is not None for g in node_data["gpu_temp"]) or
+            any(g is not None for g in node_data["gpu_power"]) or
+            any(g is not None for g in node_data["gpu_graphics_clock"]) or
+            any(g is not None for g in node_data["gpu_memory_clock"])):
             return True
     return False
 
@@ -174,8 +211,9 @@ def plot_timeline(
         values = node_data[metric_key]
         times = node_data["times"]
 
-        # Filter out None values for plotting
-        if metric_key in ["gpu_mem", "gpu_util", "io_read_rate", "io_write_rate"]:
+        # Filter out None values for plotting (all GPU and I/O metrics can have None)
+        if metric_key in ["gpu_mem", "gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power",
+                          "gpu_graphics_clock", "gpu_memory_clock", "io_read_rate", "io_write_rate"]:
             plot_times = [t for t, v in zip(times, values) if v is not None]
             plot_values = [v for v in values if v is not None]
         else:
@@ -224,8 +262,9 @@ def plot_distribution(
     for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
         values = node_data[metric_key]
 
-        # Filter None values
-        if metric_key in ["gpu_mem", "gpu_util", "io_read_rate", "io_write_rate"]:
+        # Filter None values (all GPU and I/O metrics can have None)
+        if metric_key in ["gpu_mem", "gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power",
+                          "gpu_graphics_clock", "gpu_memory_clock", "io_read_rate", "io_write_rate"]:
             plot_values = [v for v in values if v is not None]
         else:
             plot_values = values
@@ -260,6 +299,61 @@ def plot_distribution(
     plt.close()
 
     print(f"{title} saved to: {output_path}")
+
+
+def plot_gpu_clocks(
+    metrics: Dict[str, Dict],
+    output_path: Path,
+    node_colors: Dict,
+):
+    """Plot GPU graphics and memory clocks on the same chart."""
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12))
+
+    # Plot graphics clocks
+    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
+        graphics_clocks = node_data["gpu_graphics_clock"]
+        times = node_data["times"]
+
+        # Filter out None values
+        plot_times = [t for t, v in zip(times, graphics_clocks) if v is not None]
+        plot_values = [v for v in graphics_clocks if v is not None]
+
+        if not plot_values:
+            continue
+
+        color = node_colors.get(node_name, (idx, None))[1]
+        ax1.plot(plot_times, plot_values, label=f"[{idx}]", linewidth=0.8, color=color)
+
+    ax1.set_xlabel("Time (seconds)", fontsize=12)
+    ax1.set_ylabel("Graphics Clock (MHz)", fontsize=12)
+    ax1.set_title("GPU Graphics Clock Over Time", fontsize=14, fontweight="bold")
+    ax1.grid(True, alpha=0.3)
+
+    # Plot memory clocks
+    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
+        memory_clocks = node_data["gpu_memory_clock"]
+        times = node_data["times"]
+
+        # Filter out None values
+        plot_times = [t for t, v in zip(times, memory_clocks) if v is not None]
+        plot_values = [v for v in memory_clocks if v is not None]
+
+        if not plot_values:
+            continue
+
+        color = node_colors.get(node_name, (idx, None))[1]
+        ax2.plot(plot_times, plot_values, label=f"[{idx}]", linewidth=0.8, color=color)
+
+    ax2.set_xlabel("Time (seconds)", fontsize=12)
+    ax2.set_ylabel("Memory Clock (MHz)", fontsize=12)
+    ax2.set_title("GPU Memory Clock Over Time", fontsize=14, fontweight="bold")
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+    print(f"GPU Clocks saved to: {output_path}")
 
 
 def create_legend_image(node_colors: Dict, output_path: Path):
@@ -351,10 +445,24 @@ def calculate_statistics(metrics: Dict[str, Dict], node_colors: Dict) -> str:
         # GPU stats
         gpu_mem_vals = [g for g in node_data["gpu_mem"] if g is not None]
         gpu_util_vals = [g for g in node_data["gpu_util"] if g is not None]
+        gpu_mem_util_vals = [g for g in node_data["gpu_mem_util"] if g is not None]
+        gpu_temp_vals = [g for g in node_data["gpu_temp"] if g is not None]
+        gpu_power_vals = [g for g in node_data["gpu_power"] if g is not None]
+        gpu_graphics_clock_vals = [g for g in node_data["gpu_graphics_clock"] if g is not None]
+        gpu_memory_clock_vals = [g for g in node_data["gpu_memory_clock"] if g is not None]
+
         max_gpu_mem = max(gpu_mem_vals) if gpu_mem_vals else 0
         avg_gpu_mem = sum(gpu_mem_vals) / len(gpu_mem_vals) if gpu_mem_vals else 0
         max_gpu_util = max(gpu_util_vals) if gpu_util_vals else 0
         avg_gpu_util = sum(gpu_util_vals) / len(gpu_util_vals) if gpu_util_vals else 0
+        max_gpu_mem_util = max(gpu_mem_util_vals) if gpu_mem_util_vals else 0
+        avg_gpu_mem_util = sum(gpu_mem_util_vals) / len(gpu_mem_util_vals) if gpu_mem_util_vals else 0
+        max_gpu_temp = max(gpu_temp_vals) if gpu_temp_vals else 0
+        avg_gpu_temp = sum(gpu_temp_vals) / len(gpu_temp_vals) if gpu_temp_vals else 0
+        max_gpu_power = max(gpu_power_vals) if gpu_power_vals else 0
+        avg_gpu_power = sum(gpu_power_vals) / len(gpu_power_vals) if gpu_power_vals else 0
+        avg_gpu_graphics_clock = sum(gpu_graphics_clock_vals) / len(gpu_graphics_clock_vals) if gpu_graphics_clock_vals else 0
+        avg_gpu_memory_clock = sum(gpu_memory_clock_vals) / len(gpu_memory_clock_vals) if gpu_memory_clock_vals else 0
 
         stats.append(
             {
@@ -374,6 +482,14 @@ def calculate_statistics(metrics: Dict[str, Dict], node_colors: Dict) -> str:
                 "avg_gpu_mem": avg_gpu_mem,
                 "max_gpu_util": max_gpu_util,
                 "avg_gpu_util": avg_gpu_util,
+                "max_gpu_mem_util": max_gpu_mem_util,
+                "avg_gpu_mem_util": avg_gpu_mem_util,
+                "max_gpu_temp": max_gpu_temp,
+                "avg_gpu_temp": avg_gpu_temp,
+                "max_gpu_power": max_gpu_power,
+                "avg_gpu_power": avg_gpu_power,
+                "avg_gpu_graphics_clock": avg_gpu_graphics_clock,
+                "avg_gpu_memory_clock": avg_gpu_memory_clock,
             }
         )
 
@@ -524,6 +640,71 @@ def calculate_statistics(metrics: Dict[str, Dict], node_colors: Dict) -> str:
                 )
         report.append("")
 
+        report.append("Top 10 Nodes by Maximum GPU Memory Utilization")
+        report.append("-" * 80)
+        report.append(f"{'Rank':<6} {'Index':<8} {'Max Mem Util %':<16} {'Node Name'}")
+        report.append("-" * 80)
+        for rank, s in enumerate(
+            sorted(stats, key=lambda x: x["max_gpu_mem_util"], reverse=True)[:10], 1
+        ):
+            if s["max_gpu_mem_util"] > 0:
+                report.append(
+                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_mem_util']:>14.2f}%  {s['name']}"
+                )
+        report.append("")
+
+        report.append("Top 10 Nodes by Maximum GPU Temperature")
+        report.append("-" * 80)
+        report.append(f"{'Rank':<6} {'Index':<8} {'Max Temp (°C)':<16} {'Node Name'}")
+        report.append("-" * 80)
+        for rank, s in enumerate(
+            sorted(stats, key=lambda x: x["max_gpu_temp"], reverse=True)[:10], 1
+        ):
+            if s["max_gpu_temp"] > 0:
+                report.append(
+                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_temp']:>14.1f}  {s['name']}"
+                )
+        report.append("")
+
+        report.append("Top 10 Nodes by Maximum GPU Power Consumption")
+        report.append("-" * 80)
+        report.append(f"{'Rank':<6} {'Index':<8} {'Max Power (W)':<16} {'Node Name'}")
+        report.append("-" * 80)
+        for rank, s in enumerate(
+            sorted(stats, key=lambda x: x["max_gpu_power"], reverse=True)[:10], 1
+        ):
+            if s["max_gpu_power"] > 0:
+                report.append(
+                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_power']:>14.2f}  {s['name']}"
+                )
+        report.append("")
+
+        report.append("Top 10 Nodes by Average GPU Graphics Clock")
+        report.append("-" * 80)
+        report.append(f"{'Rank':<6} {'Index':<8} {'Avg Clock (MHz)':<18} {'Node Name'}")
+        report.append("-" * 80)
+        for rank, s in enumerate(
+            sorted(stats, key=lambda x: x["avg_gpu_graphics_clock"], reverse=True)[:10], 1
+        ):
+            if s["avg_gpu_graphics_clock"] > 0:
+                report.append(
+                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_gpu_graphics_clock']:>16.1f}  {s['name']}"
+                )
+        report.append("")
+
+        report.append("Top 10 Nodes by Average GPU Memory Clock")
+        report.append("-" * 80)
+        report.append(f"{'Rank':<6} {'Index':<8} {'Avg Clock (MHz)':<18} {'Node Name'}")
+        report.append("-" * 80)
+        for rank, s in enumerate(
+            sorted(stats, key=lambda x: x["avg_gpu_memory_clock"], reverse=True)[:10], 1
+        ):
+            if s["avg_gpu_memory_clock"] > 0:
+                report.append(
+                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_gpu_memory_clock']:>16.1f}  {s['name']}"
+                )
+        report.append("")
+
     report.append("=" * 80)
     return "\n".join(report)
 
@@ -641,6 +822,30 @@ def main():
             output_dir / "gpu_utilization.png",
             node_colors,
         )
+        plot_timeline(
+            metrics,
+            "gpu_temp",
+            "GPU Temperature (°C)",
+            "GPU Temperature Over Time",
+            output_dir / "gpu_temperature.png",
+            node_colors,
+        )
+        plot_timeline(
+            metrics,
+            "gpu_power",
+            "GPU Power (W)",
+            "GPU Power Consumption Over Time",
+            output_dir / "gpu_power.png",
+            node_colors,
+        )
+
+        # GPU clocks plot - combine graphics and memory clocks
+        plot_gpu_clocks(
+            metrics,
+            output_dir / "gpu_clocks.png",
+            node_colors,
+        )
+
         plot_distribution(
             metrics,
             "gpu_mem",
