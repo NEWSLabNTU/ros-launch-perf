@@ -188,7 +188,7 @@ fn handle_launch(args: &options::LaunchArgs) -> eyre::Result<()> {
     // Create replay args and call handle_replay
     let replay_args = options::ReplayArgs {
         input_file: PathBuf::from("record.json"),
-        common: options::CommonOptions::default(),
+        common: args.common.clone(),
     };
 
     handle_replay(&replay_args)?;
@@ -236,12 +236,9 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
         file_data: HashMap::new(),
     };
 
-    // Create minimal common options for direct execution
-    let common = options::CommonOptions::default();
-
     // Build the async runtime and run directly
     let runtime = Runtime::new()?;
-    runtime.block_on(run_direct(&launch_dump, &common))?;
+    runtime.block_on(run_direct(&launch_dump, &args.common))?;
 
     Ok(())
 }

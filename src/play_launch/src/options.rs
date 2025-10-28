@@ -53,6 +53,9 @@ pub struct LaunchArgs {
     /// Launch arguments in KEY:=VALUE format
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub launch_arguments: Vec<String>,
+
+    #[command(flatten)]
+    pub common: CommonOptions,
 }
 
 /// Arguments for running a single node
@@ -67,6 +70,9 @@ pub struct RunArgs {
     /// Node arguments
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub args: Vec<String>,
+
+    #[command(flatten)]
+    pub common: CommonOptions,
 }
 
 /// Arguments for dump command
@@ -104,7 +110,7 @@ pub struct ReplayArgs {
 }
 
 /// Common options shared across all commands
-#[derive(Args, Default)]
+#[derive(Args, Default, Clone)]
 pub struct CommonOptions {
     /// Log directory for execution outputs
     #[arg(long, default_value = "play_log")]
