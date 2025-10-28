@@ -62,10 +62,6 @@ Or use the full ROS command:
 ros2 run play_launch play_launch [options]
 ```
 
-Generate shell script from record:
-```sh
-play_launch --print-shell > launch.sh
-```
 
 Analyze and plot resource usage:
 ```sh
@@ -133,11 +129,11 @@ The `LaunchDump` struct (play_launch/src/launch_dump.rs:18) contains:
    - Retry logic: up to `load_node_attempts` (default: 3) with `load_node_timeout_millis` (default: 30s)
    - Orphans only loaded if `--load-orphan-composable-nodes` is set
 
-6. **Container Readiness Checking** (optional, container_readiness.rs):
-   - Enable with `--wait-for-service-ready` flag
+6. **Container Readiness Checking** (default: enabled, container_readiness.rs):
+   - **Enabled by default** (set `container_readiness.wait_for_service_ready: false` in config to disable)
    - ROS service discovery thread monitors container services
    - Waits for `list_nodes` and `load_node` services to be available
-   - Configurable timeout via `--service-ready-timeout-secs` (default: 120s)
+   - Configurable timeout via config file (default: 120s)
 
 7. **Logging**: All node stdout/stderr, PIDs, status codes saved to `play_log/node/` and `play_log/load_node/`
 
@@ -250,33 +246,49 @@ plot_play_launch --log-dir ./play_log/latest --metrics cpu memory --output-dir .
 
 play_launch accepts these options (play_launch/src/options.rs):
 
-### Basic Options
+### CLI Flags (Simplified)
 - `--log-dir <PATH>`: Log directory (default: `play_log`)
-- `--input-file <PATH>`: Input record file (default: `record.json`)
-- `--print-shell`: Generate shell script instead of executing
-
-### Runtime Configuration
-- `--config <PATH>` (short: `-c`): Runtime configuration file (YAML)
-  - Resource monitoring settings
-  - Per-process CPU affinity and nice values
-  - See `docs/resource-monitoring-design.md` for details
-
-### Resource Monitoring
+- `--config <PATH>` (short: `-c`): Runtime configuration file (YAML) - **Primary interface for fine-grained control**
 - `--enable-monitoring`: Enable resource monitoring for all nodes (overrides config file)
 - `--monitor-interval-ms <MS>`: Sampling interval in milliseconds (overrides config file)
-
-### Composable Node Loading
-- `--delay-load-node-millis <MS>`: Delay before loading composable nodes (default: 2000ms)
-- `--load-node-timeout-millis <MS>`: Timeout for composable node loading (default: 30000ms)
-- `--load-node-attempts <N>`: Max retry attempts (default: 3)
-- `--max-concurrent-load-node-spawn <N>`: Concurrent loading limit (default: 10)
 - `--standalone-composable-nodes`: Run composable nodes standalone instead of loading into containers
 - `--load-orphan-composable-nodes`: Load composable nodes that have no matching container
 
-### Container Readiness
-- `--wait-for-service-ready`: Enable container service readiness checking via ROS service discovery
-- `--service-ready-timeout-secs <N>`: Max wait time for container services (default: 120s, 0=unlimited)
-- `--service-poll-interval-ms <MS>`: Polling interval for service discovery (default: 500ms)
+### Configuration File (config.yaml)
+
+The `--config` flag points to a YAML file that controls fine-grained behavior. Use this for production deployments.
+
+**Example config.yaml**:
+```yaml
+# Composable node loading settings
+composable_node_loading:
+  delay_load_node_millis: 2000        # Delay before loading (default: 2000ms)
+  load_node_timeout_millis: 30000     # Timeout per node (default: 30000ms)
+  load_node_attempts: 3               # Max retry attempts (default: 3)
+  max_concurrent_load_node_spawn: 10  # Concurrent loading limit (default: 10)
+
+# Container readiness checking (default: enabled)
+container_readiness:
+  wait_for_service_ready: true        # Enable service discovery (default: true)
+  service_ready_timeout_secs: 120     # Max wait time (default: 120s, 0=unlimited)
+  service_poll_interval_ms: 500       # Polling interval (default: 500ms)
+
+# Resource monitoring settings
+monitoring:
+  enabled: false                      # Enable monitoring (default: false)
+  sample_interval_ms: 1000            # Sampling interval (default: 1000ms)
+
+# Per-process configurations (optional)
+processes:
+  - node_pattern: "NODE 'rclcpp_components/component_container*"
+    monitor: true
+    cpu_affinity: [0, 1]
+    nice: 5
+```
+
+**Important**: Service readiness checking is **enabled by default** (changed from previous behavior). To disable, set `container_readiness.wait_for_service_ready: false` in the config file.
+
+See `test/autoware_planning_simulation/autoware_config.yaml` for a complete example and `docs/resource-monitoring-design.md` for detailed documentation.
 
 ## Log Directory Structure
 
@@ -376,6 +388,11 @@ Composable node (`load_node/vehicle_cmd_gate/metadata.json`):
 - **User responsibility**: Source ROS setup files before running `play_launch`
 - play_launch does NOT source any setup.bash files internally
 - Subprocess spawned by play_launch inherits the parent process environment (PATH, AMENT_PREFIX_PATH, etc.)
+- **Environment variables from launch files**: dump_launch captures environment variables set via `<env>` tags in launch files, play_launch replays them to child processes
+  - Captured from Node action's `additional_env` attribute
+  - Stored in NodeRecord.env in record.json
+  - Applied via `command.envs()` before spawning processes
+  - Composable nodes inherit environment from their container processes
 
 ### Process Cleanup
 - **CleanupGuard** (main.rs:207-215): RAII pattern ensures all child processes are killed on exit
