@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ROS2 Launch Inspection Tool - A dual-component system for recording and replaying ROS 2 launch executions. The project consists of:
+ROS2 Launch Inspection Tool - A comprehensive system for recording, replaying, and analyzing ROS 2 launch executions. The project consists of:
 
 1. **dump_launch** (Python): Records ROS 2 launch file execution and generates `record.json`
 2. **play_launch** (Rust): Replays the recorded launch execution from `record.json`
 3. **play_launch_wrapper** (CMake): Provides a wrapper script to run `play_launch` directly from PATH
+4. **play_launch_analyzer** (Python): Analysis and visualization tools for play_launch execution logs
 
 ## Build & Install
 
@@ -16,11 +17,12 @@ ROS2 Launch Inspection Tool - A dual-component system for recording and replayin
 ```sh
 make build
 ```
-This builds the entire workspace in 4 stages using colcon:
+This builds the entire workspace in 5 stages using colcon:
 1. Stage 1: ROS2 Rust base packages
 2. Stage 2: ROS interface packages
 3. Stage 3: dump_launch Python package
 4. Stage 4: play_launch Rust package
+5. Stage 5: Analysis tools and wrappers (play_launch_wrapper, play_launch_analyzer)
 
 ### Source Workspace
 After building, source the workspace to use the tools:
@@ -65,7 +67,19 @@ Generate shell script from record:
 play_launch --print-shell > launch.sh
 ```
 
-**Note**: The `play_launch` command is available in PATH thanks to the `play_launch_wrapper` package, which provides a convenience wrapper around `ros2 run play_launch play_launch`.
+Analyze and plot resource usage:
+```sh
+# Plot latest log directory
+plot_play_launch
+
+# Plot specific log directory
+plot_play_launch --log-dir play_log/2025-10-28_16-17-56
+
+# Specify output directory
+plot_play_launch --output-dir /tmp/plots
+```
+
+**Note**: The `play_launch` and `plot_play_launch` commands are available in PATH thanks to the `play_launch_wrapper` and `play_launch_analyzer` packages.
 
 ### Testing & Profiling
 
@@ -152,6 +166,68 @@ src/play_launch_wrapper/
 - ament_cargo (used by play_launch) doesn't support environment hooks in Cargo.toml
 - Creating a separate CMake package with ament_environment_hooks() is the standard ROS pattern
 - Cleaner than post-build scripts and survives rebuilds automatically
+
+### play_launch_analyzer Package
+
+The `play_launch_analyzer` is an ament_python package that provides analysis and visualization tools for play_launch execution logs.
+
+**Package Structure**:
+```
+src/play_launch_analyzer/
+├── package.xml                  # ROS package metadata
+├── setup.py                     # Python package setup
+├── README.md                    # Package documentation
+├── resource/
+│   └── play_launch_analyzer     # ROS resource marker
+└── play_launch_analyzer/
+    ├── __init__.py              # Package entry point
+    └── plot_resource_usage.py   # Resource plotting script
+```
+
+**Provided Commands**:
+- `plot_play_launch`: Generate comprehensive resource usage plots and statistics from play_launch logs
+
+**Features**:
+- Automatic detection and plotting of available metrics (CPU, memory, GPU, I/O, network)
+- Timeline plots showing metrics over time
+- Distribution plots (box plots) showing statistical distributions
+- Comprehensive statistics report with top 10 rankings for all metrics
+- Graceful handling of missing data (e.g., no GPU hardware)
+
+**Usage**:
+```bash
+# Plot all metrics from latest log in current directory's play_log/
+plot_play_launch
+
+# List available metrics in a log
+plot_play_launch --list-metrics
+plot_play_launch --log-dir /path/to/log --list-metrics
+
+# Plot specific metrics only
+plot_play_launch --metrics cpu memory
+plot_play_launch --metrics io
+plot_play_launch --metrics gpu
+
+# Plot from specific log directory (absolute or relative)
+plot_play_launch --log-dir play_log/2025-10-28_16-17-56
+plot_play_launch --log-dir /absolute/path/to/log
+
+# Specify custom base log directory
+plot_play_launch --base-log-dir /path/to/logs
+
+# Specify output directory
+plot_play_launch --output-dir /tmp/plots
+
+# Combine options
+plot_play_launch --log-dir ./play_log/latest --metrics cpu memory --output-dir ./analysis
+```
+
+**Features**:
+- **Automatic log discovery**: Finds latest timestamped log in ./play_log by default
+- **Flexible paths**: Supports both absolute and relative paths for log directories
+- **Metric selection**: Choose which metrics to plot (cpu, memory, io, gpu, or all)
+- **Metric inspection**: List available metrics before plotting
+- **Works anywhere**: Can be run from any directory, not just the test directory
 
 ### Key Rust Modules
 
@@ -337,6 +413,7 @@ Located in `test/autoware_planning_simulation/`:
   - `make start-sim`: Start Autoware planning simulator with play_launch
   - `make drive`: Run autonomous driving test
   - `make start-sim-and-drive`: Complete test sequence (simulator + autonomous test)
+  - `make plot`: Generate resource usage plots from latest play_log directory
   - `make kill-orphans`: Kill orphan ROS nodes
 - `scripts/start-sim.sh`: Script to start simulator (extracted from Makefile)
 - `scripts/test_autonomous_drive.py`: Automated autonomous driving test
@@ -547,22 +624,37 @@ timestamp,pid,cpu_percent,cpu_user_secs,rss_bytes,vms_bytes,io_read_bytes,io_wri
 5. `io_read_usage.png` - I/O read rate timeline (when I/O data available)
 6. `io_write_usage.png` - I/O write rate timeline (when I/O data available)
 7. `io_distribution.png` - I/O rate distribution (when I/O data available)
-8. `gpu_memory_usage.png` - GPU memory timeline (when GPU data available)
-9. `gpu_utilization.png` - GPU utilization timeline (when GPU data available)
-10. `gpu_distribution.png` - GPU distribution (when GPU data available)
-11. `legend.png` - Node index legend mapping
-12. `statistics.txt` - Comprehensive statistics report
+8. `gpu_memory_usage.png` - GPU memory usage timeline (when GPU data available)
+9. `gpu_utilization.png` - GPU compute utilization timeline (when GPU data available)
+10. `gpu_temperature.png` - GPU temperature timeline (when GPU data available)
+11. `gpu_power.png` - GPU power consumption timeline (when GPU data available)
+12. `gpu_clocks.png` - GPU graphics and memory clocks timeline (when GPU data available)
+13. `gpu_distribution.png` - GPU metrics distribution (when GPU data available)
+14. `legend.png` - Node index legend mapping
+15. `statistics.txt` - Comprehensive statistics report
 
 **Statistics Report Includes**:
 - Top 10 nodes by max/avg CPU usage
 - Top 10 nodes by max/avg memory usage
 - Top 10 nodes by avg I/O read/write rates
 - Top 10 nodes by avg TCP/UDP connections
-- Top 10 nodes by max/avg GPU memory/utilization (when available)
+- Top 10 nodes by max GPU memory usage (when available)
+- Top 10 nodes by avg GPU compute utilization (when available)
+- Top 10 nodes by max GPU memory utilization % (when available)
+- Top 10 nodes by max GPU temperature (when available)
+- Top 10 nodes by max GPU power consumption (when available)
+- Top 10 nodes by avg GPU graphics/memory clock speeds (when available)
+
+**GPU Metrics Note**:
+GPU metrics track CUDA compute processes only (via NVML's `running_compute_processes()`). Regular ROS nodes that don't execute CUDA kernels will show empty GPU data. This is expected behavior for most Autoware nodes. GPU metrics will populate when processes actively use CUDA for compute workloads (e.g., ML inference, perception nodes with CUDA acceleration).
 
 **Usage**:
 ```bash
-# Plot latest log directory
+# Using Makefile (recommended - plots latest log directory)
+cd test/autoware_planning_simulation
+make plot
+
+# Direct script invocation - plot latest log directory
 cd test/autoware_planning_simulation
 python3 scripts/plot_resource_usage.py
 
@@ -580,6 +672,36 @@ python3 scripts/plot_resource_usage.py --output-dir custom_plots
 - See `docs/resource-monitoring-design.md` for complete roadmap
 
 ## Recent Changes
+
+### 2025-10-28: NVML Library Loading Fix
+
+**Problem Identified:**
+- GPU monitoring failed with error: "Failed to initialize NVML: a libloading error occurred: libnvidia-ml.so: cannot open shared object file: No such file or directory"
+- Error occurred despite nvidia-smi working correctly and NVIDIA drivers being installed
+- The system had `libnvidia-ml.so.1` (runtime library) but not `libnvidia-ml.so` (development symlink)
+
+**Root Cause:**
+- nvml-wrapper 0.10 tried to load `libnvidia-ml.so` (development library name)
+- Linux systems only install `libnvidia-ml.so.1` (versioned runtime library) with the NVIDIA driver package
+- The unversioned `libnvidia-ml.so` only exists when CUDA development packages are installed
+
+**Solution:**
+- Updated nvml-wrapper from version 0.10 to 0.11.0
+- Version 0.11.0 includes fix from PR #63 that changes LIB_PATH to `libnvidia-ml.so.1` on Linux
+- This matches the actual runtime library name installed by NVIDIA drivers
+
+**Files Modified:**
+- `src/play_launch/Cargo.toml`: Updated nvml-wrapper dependency from "0.10" to "0.11"
+
+**Testing:**
+- GPU monitoring now initializes successfully: "NVML initialized successfully with 1 GPU device(s)"
+- Autoware planning simulator runs without NVML errors
+- GPU metrics collection functional
+
+**Impact:**
+- ✅ GPU monitoring now works on systems with NVIDIA drivers but without CUDA development packages
+- ✅ Matches standard Linux library naming conventions for runtime libraries
+- ✅ Eliminates need to install CUDA SDK just for GPU monitoring
 
 ### 2025-10-27: Namespace Resolution for Composable Nodes
 
