@@ -135,22 +135,17 @@ fn main() -> eyre::Result<()> {
 
     // Route to appropriate handler based on subcommand
     match &opts.command {
-        Some(options::Command::Launch(args)) => {
-            handle_launch(args, &opts.common)?;
+        options::Command::Launch(args) => {
+            handle_launch(args)?;
         }
-        Some(options::Command::Run(args)) => {
-            handle_run(args, &opts.common)?;
+        options::Command::Run(args) => {
+            handle_run(args)?;
         }
-        Some(options::Command::Dump(args)) => {
+        options::Command::Dump(args) => {
             handle_dump(args)?;
         }
-        Some(options::Command::Replay(args)) => {
-            // Replay subcommand
-            handle_replay(Some(args), &opts)?;
-        }
-        None => {
-            // No subcommand (backward compatibility)
-            handle_replay(None, &opts)?;
+        options::Command::Replay(args) => {
+            handle_replay(args)?;
         }
     }
 
@@ -158,10 +153,7 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Handle the 'launch' subcommand (dump + replay)
-fn handle_launch(
-    _args: &options::LaunchArgs,
-    _common: &options::CommonOptions,
-) -> eyre::Result<()> {
+fn handle_launch(_args: &options::LaunchArgs) -> eyre::Result<()> {
     error!("The 'launch' subcommand is not yet implemented.");
     error!("This will be implemented in Phase 2 of the roadmap.");
     error!("");
@@ -172,7 +164,7 @@ fn handle_launch(
 }
 
 /// Handle the 'run' subcommand (dump + replay)
-fn handle_run(_args: &options::RunArgs, _common: &options::CommonOptions) -> eyre::Result<()> {
+fn handle_run(_args: &options::RunArgs) -> eyre::Result<()> {
     error!("The 'run' subcommand is not yet implemented.");
     error!("This will be implemented in Phase 2 of the roadmap.");
     error!("");
@@ -192,27 +184,22 @@ fn handle_dump(_args: &options::DumpArgs) -> eyre::Result<()> {
     std::process::exit(1);
 }
 
-/// Handle the 'replay' subcommand (or no subcommand for backward compatibility)
-fn handle_replay(replay_args: Option<&options::ReplayArgs>, opts: &Options) -> eyre::Result<()> {
-    // Use input_file from ReplayArgs if provided, otherwise from CommonOptions
-    let input_file = if let Some(args) = replay_args {
-        &args.input_file
-    } else {
-        &PathBuf::from("record.json") // Default when no subcommand
-    };
+/// Handle the 'replay' subcommand
+fn handle_replay(args: &options::ReplayArgs) -> eyre::Result<()> {
+    let input_file = &args.input_file;
 
-    if opts.common.print_shell {
-        generate_shell(input_file, &opts.common)?;
+    if args.common.print_shell {
+        generate_shell(input_file, &args.common)?;
     } else {
         // Start ROS service discovery thread if service checking is enabled
-        if opts.common.wait_for_service_ready {
+        if args.common.wait_for_service_ready {
             info!("Starting ROS service discovery thread for container readiness checking...");
-            if opts.common.service_ready_timeout_secs == 0 {
+            if args.common.service_ready_timeout_secs == 0 {
                 info!("Container service readiness will wait indefinitely");
             } else {
                 info!(
                     "Container service readiness timeout: {}s",
-                    opts.common.service_ready_timeout_secs
+                    args.common.service_ready_timeout_secs
                 );
             }
 
@@ -236,7 +223,7 @@ fn handle_replay(replay_args: Option<&options::ReplayArgs>, opts: &Options) -> e
         let runtime = Runtime::new()?;
 
         // Run the whole playing task in the runtime.
-        runtime.block_on(play(input_file, &opts.common))?;
+        runtime.block_on(play(input_file, &args.common))?;
     }
 
     Ok(())
@@ -286,33 +273,46 @@ impl Drop for CleanupGuard {
 
 /// Play the launch according to the launch record.
 async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
+    info!("=== Starting play() function ===");
+
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let _cleanup_guard = CleanupGuard;
+    info!("CleanupGuard installed");
 
     // Load runtime configuration
+    info!("Loading runtime configuration...");
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.enable_monitoring,
         common.monitor_interval_ms,
     )?;
+    info!("Runtime configuration loaded successfully");
 
+    info!("Loading launch dump from: {}", input_file.display());
     let launch_dump = load_launch_dump(input_file)?;
+    info!("Launch dump loaded successfully");
 
     // Prepare directories
+    info!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
+    info!("Log directory created: {}", log_dir.display());
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
+    info!("Created params_files directory");
 
     let node_log_dir = log_dir.join("node");
     fs::create_dir(&node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", node_log_dir.display()))?;
+    info!("Created node log directory");
 
     let load_node_log_dir = log_dir.join("load_node");
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
+    info!("Created load_node log directory");
 
     // Initialize NVML for GPU monitoring
+    info!("Initializing NVML...");
     let nvml = match nvml_wrapper::Nvml::init() {
         Ok(nvml) => {
             let device_count = nvml.device_count().unwrap_or(0);
@@ -330,6 +330,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     };
 
     // Initialize monitoring if enabled
+    info!("Initializing monitoring and process registry...");
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
     let _monitor_thread = if runtime_config.monitoring.enabled {
         let monitor_config = MonitorConfig {
@@ -353,8 +354,10 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         debug!("Resource monitoring disabled");
         None
     };
+    info!("Monitoring initialization complete");
 
     // Build a table of composable node containers
+    info!("Building container names table...");
     let container_names: HashSet<String> = launch_dump
         .container
         .par_iter()
@@ -368,21 +371,37 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
             }
         })
         .collect();
+    info!(
+        "Container names table built with {} containers",
+        container_names.len()
+    );
 
     // Prepare node execution contexts
+    info!("Preparing node execution contexts...");
     let NodeContextClasses {
         container_contexts,
         non_container_node_contexts: pure_node_contexts,
     } = prepare_node_contexts(&launch_dump, &node_log_dir, &container_names)?;
+    info!(
+        "Node contexts prepared: {} containers, {} pure nodes",
+        container_contexts.len(),
+        pure_node_contexts.len()
+    );
 
     // Prepare LoadNode request execution contexts
+    info!("Preparing composable node contexts...");
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
+    info!(
+        "Composable node contexts prepared: {} load_node contexts",
+        load_node_contexts.len()
+    );
 
     // Report the number of entities
     info!("nodes: {}", pure_node_contexts.len());
 
     // Spawn non-container nodes
+    info!("Spawning non-container nodes...");
     let non_container_node_tasks = spawn_nodes(pure_node_contexts, Some(process_registry.clone()))
         .into_iter()
         .map(|future| future.boxed());
@@ -390,12 +409,18 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     // Initialize component loader for service-based loading
     info!("Initializing component loader for service-based node loading");
     let component_loader = match crate::component_loader::start_component_loader_thread() {
-        Ok(loader) => Some(loader),
+        Ok(loader) => {
+            info!("Component loader initialized successfully");
+            Some(loader)
+        }
         Err(e) => {
             error!("Failed to initialize component loader: {}", e);
+            error!("Continuing without component loader");
             None
         }
     };
+
+    info!("Proceeding with execution...");
 
     // Create composable node execution configuration
     let composable_node_config = ComposableNodeExecutionConfig {
@@ -460,6 +485,11 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     // Collect all waiting tasks built so far.
     let mut wait_futures: Vec<_> =
         chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
+
+    info!("Collected {} futures to wait on", wait_futures.len());
+    if wait_futures.is_empty() {
+        warn!("No futures to wait on - this will cause immediate exit!");
+    }
 
     // Poll on all waiting tasks and consume finished tasks
     // one-by-one, while also listening for termination signals.

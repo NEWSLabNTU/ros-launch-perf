@@ -11,13 +11,10 @@ use std::path::PathBuf;
     play_launch run demo_nodes_cpp talker\n  \
     play_launch dump launch autoware_launch planning_simulator.launch.xml --output autoware.json\n  \
     play_launch replay --input-file record.json")]
+#[command(arg_required_else_help = true)]
 pub struct Options {
     #[command(subcommand)]
-    pub command: Option<Command>,
-
-    // Flatten common options for backward compatibility when no subcommand is given
-    #[command(flatten)]
-    pub common: CommonOptions,
+    pub command: Command,
 }
 
 #[derive(Subcommand)]
@@ -101,10 +98,13 @@ pub struct ReplayArgs {
     /// Input record file to replay
     #[arg(long, default_value = "record.json")]
     pub input_file: PathBuf,
+
+    #[command(flatten)]
+    pub common: CommonOptions,
 }
 
 /// Common options shared across all commands
-#[derive(Args)]
+#[derive(Args, Default)]
 pub struct CommonOptions {
     /// Log directory for execution outputs
     #[arg(long, default_value = "play_log")]
