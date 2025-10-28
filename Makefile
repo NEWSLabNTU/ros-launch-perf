@@ -6,14 +6,15 @@ default: help
 
 .PHONY: help
 help:
-	@echo "ROS Launch Perf - 4-Stage Build System"
+	@echo "ROS Launch Perf - 5-Stage Build System"
 	@echo ""
 	@echo "Build Commands:"
-	@echo "  make build                  - Build entire project (all 4 stages)"
+	@echo "  make build                  - Build entire project (all 5 stages)"
 	@echo "  make build_ros2_rust        - Stage 1: Build ROS2 Rust base packages"
 	@echo "  make build_interface        - Stage 2: Build ROS interface packages"
 	@echo "  make build_dump_launch      - Stage 3: Build dump_launch Python package"
 	@echo "  make build_play_launch      - Stage 4: Build play_launch Rust package"
+	@echo "  make build_tools            - Stage 5: Build analysis tools and wrappers"
 	@echo ""
 	@echo "Development:"
 	@echo "  make clean                  - Clean all build artifacts"
@@ -25,9 +26,10 @@ help:
 	@echo "  make prepare                - Install ROS dependencies with rosdep"
 	@echo ""
 	@echo "Usage:"
-	@echo "  Source workspace:  . install/setup.bash"
-	@echo "  Run dump_launch:   ros2 run dump_launch dump_launch <package> <launch_file> [args...]"
-	@echo "  Run play_launch:   ros2 run play_launch play_launch [options]"
+	@echo "  Source workspace:   . install/setup.bash"
+	@echo "  Run dump_launch:    ros2 run dump_launch dump_launch <package> <launch_file> [args...]"
+	@echo "  Run play_launch:    play_launch [options]"
+	@echo "  Plot resources:     plot_play_launch [--log-dir <dir>]"
 	@echo ""
 
 .PHONY: prepare
@@ -38,7 +40,7 @@ prepare:
 	rosdep install --from-paths src --ignore-src -r -y
 
 .PHONY: build
-build: build_ros2_rust build_interface build_dump_launch build_play_launch
+build: build_ros2_rust build_interface build_dump_launch build_play_launch build_tools
 
 .PHONY: build_ros2_rust
 build_ros2_rust:
@@ -71,6 +73,13 @@ build_play_launch:
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
 	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch 2>&1 | tee $(LOG_DIR)/play_launch.log
+
+.PHONY: build_tools
+build_tools:
+	@echo "Stage 5: Building analysis tools and wrappers... (log: $(LOG_DIR)/tools.log)"
+	@mkdir -p $(LOG_DIR)
+	@. install/setup.sh && \
+	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch_wrapper src/play_launch_analyzer 2>&1 | tee $(LOG_DIR)/tools.log
 
 .PHONY: clean
 clean:
