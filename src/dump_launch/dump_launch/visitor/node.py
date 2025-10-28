@@ -104,6 +104,27 @@ def visit_node(
     else:
         remaps = node.expanded_remapping_rules
 
+    # Extract environment variables
+    env_vars = list()
+    if hasattr(node, "additional_env") and node.additional_env is not None:
+        # additional_env can be either a dict or a list of tuples
+        if isinstance(node.additional_env, dict):
+            for key, value in node.additional_env.items():
+                # Perform substitutions on key and value
+                key_str = substitute(key) if not isinstance(key, str) else key
+                value_str = substitute(value) if not isinstance(value, str) else value
+                env_vars.append((key_str, value_str))
+        elif isinstance(node.additional_env, list):
+            for item in node.additional_env:
+                if isinstance(item, tuple) and len(item) == 2:
+                    key, value = item
+                    # Perform substitutions on key and value
+                    key_str = substitute(key) if not isinstance(key, str) else key
+                    value_str = (
+                        substitute(value) if not isinstance(value, str) else value
+                    )
+                    env_vars.append((key_str, value_str))
+
     # Store a node record
     node_name = node._Node__expanded_node_name
     if "<node_name_unspecified>" in node_name:
@@ -121,6 +142,7 @@ def visit_node(
         params_files=params_files,
         ros_args=ros_args,
         args=args,
+        env=env_vars if env_vars else None,
     )
     dump.node.append(record)
 

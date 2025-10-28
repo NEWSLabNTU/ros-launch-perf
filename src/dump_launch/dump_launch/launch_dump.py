@@ -17,6 +17,7 @@ class NodeRecord:
     ros_args: Optional[List[Text]]
     args: Optional[List[Text]]
     cmd: List[Text]
+    env: Optional[List[Tuple[Text, Text]]] = None
 
 
 @dataclass
@@ -30,6 +31,7 @@ class LoadNodeRecord:
     remaps: List[Tuple[Text, Text]]
     params: List[Tuple[Text, Text]]
     extra_args: Dict[Text, Text]
+    env: Optional[List[Tuple[Text, Text]]] = None
 
 
 @dataclass
