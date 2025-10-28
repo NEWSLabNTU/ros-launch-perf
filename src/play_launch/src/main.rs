@@ -3,6 +3,7 @@ mod component_loader;
 mod config;
 mod container_readiness;
 mod context;
+mod dump_launcher;
 mod execution;
 mod launch_dump;
 mod node_cmdline;
@@ -153,35 +154,295 @@ fn main() -> eyre::Result<()> {
 }
 
 /// Handle the 'launch' subcommand (dump + replay)
-fn handle_launch(_args: &options::LaunchArgs) -> eyre::Result<()> {
-    error!("The 'launch' subcommand is not yet implemented.");
-    error!("This will be implemented in Phase 2 of the roadmap.");
-    error!("");
-    error!("For now, please use the two-step workflow:");
-    error!("  1. ros2 run dump_launch dump_launch <package> <launch_file>");
-    error!("  2. play_launch replay --input-file record.json");
-    std::process::exit(1);
+fn handle_launch(args: &options::LaunchArgs) -> eyre::Result<()> {
+    use crate::dump_launcher::DumpLauncher;
+    use tokio::runtime::Runtime;
+
+    info!("Step 1/2: Recording launch execution...");
+
+    // Create tokio runtime for async operations
+    let runtime = Runtime::new()?;
+
+    // Run dump phase
+    runtime.block_on(async {
+        let launcher = DumpLauncher::new()
+            .wrap_err("Failed to initialize dump_launch. Ensure ROS workspace is sourced.")?;
+
+        // Use default record.json in current directory
+        let record_path = PathBuf::from("record.json");
+
+        launcher
+            .dump_launch(
+                &args.package_or_path,
+                args.launch_file.as_deref(),
+                &args.launch_arguments,
+                &record_path,
+            )
+            .await?;
+
+        Ok::<(), eyre::Report>(())
+    })?;
+
+    info!("Step 2/2: Replaying launch execution...");
+
+    // Create replay args and call handle_replay
+    let replay_args = options::ReplayArgs {
+        input_file: PathBuf::from("record.json"),
+        common: options::CommonOptions::default(),
+    };
+
+    handle_replay(&replay_args)?;
+
+    Ok(())
 }
 
-/// Handle the 'run' subcommand (dump + replay)
-fn handle_run(_args: &options::RunArgs) -> eyre::Result<()> {
-    error!("The 'run' subcommand is not yet implemented.");
-    error!("This will be implemented in Phase 2 of the roadmap.");
-    error!("");
-    error!("For now, please use the two-step workflow:");
-    error!("  1. ros2 run dump_launch dump_launch <package> <exec>");
-    error!("  2. play_launch replay --input-file record.json");
-    std::process::exit(1);
+/// Handle the 'run' subcommand (direct node execution)
+fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
+    use crate::launch_dump::{LaunchDump, NodeRecord};
+    use tokio::runtime::Runtime;
+
+    info!("Running single node: {} {}", args.package, args.executable);
+
+    // Build command line for the node
+    let mut cmd = vec![
+        "ros2".to_string(),
+        "run".to_string(),
+        args.package.clone(),
+        args.executable.clone(),
+    ];
+    cmd.extend(args.args.clone());
+
+    // Create a minimal LaunchDump with a single node
+    let node_record = NodeRecord {
+        executable: args.executable.clone(),
+        package: Some(args.package.clone()),
+        name: Some(args.executable.clone()),
+        namespace: Some("/".to_string()),
+        exec_name: Some(args.executable.clone()),
+        params: vec![],
+        params_files: vec![],
+        remaps: vec![],
+        ros_args: None,
+        args: Some(args.args.clone()),
+        cmd,
+        env: None,
+    };
+
+    let launch_dump = LaunchDump {
+        node: vec![node_record],
+        load_node: vec![],
+        container: vec![],
+        lifecycle_node: vec![],
+        file_data: HashMap::new(),
+    };
+
+    // Create minimal common options for direct execution
+    let common = options::CommonOptions::default();
+
+    // Build the async runtime and run directly
+    let runtime = Runtime::new()?;
+    runtime.block_on(run_direct(&launch_dump, &common))?;
+
+    Ok(())
+}
+
+/// Run a launch dump directly without file I/O
+async fn run_direct(
+    launch_dump: &launch_dump::LaunchDump,
+    common: &options::CommonOptions,
+) -> eyre::Result<()> {
+    info!("=== Starting direct node execution ===");
+
+    // Install cleanup guard
+    let _cleanup_guard = CleanupGuard;
+    info!("CleanupGuard installed");
+
+    // Load runtime configuration
+    info!("Loading runtime configuration...");
+    let runtime_config = load_runtime_config(
+        common.config.as_deref(),
+        common.enable_monitoring,
+        common.monitor_interval_ms,
+    )?;
+    info!("Runtime configuration loaded successfully");
+
+    // Create temporary log directory
+    info!("Creating log directories...");
+    let log_dir = create_log_dir(&common.log_dir)?;
+    info!("Log directory created: {}", log_dir.display());
+
+    let node_log_dir = log_dir.join("node");
+    fs::create_dir(&node_log_dir)?;
+    info!("Created node log directory");
+
+    // Initialize NVML for GPU monitoring
+    let nvml = match nvml_wrapper::Nvml::init() {
+        Ok(nvml) => {
+            let device_count = nvml.device_count().unwrap_or(0);
+            info!(
+                "NVML initialized successfully with {} GPU device(s)",
+                device_count
+            );
+            Some(nvml)
+        }
+        Err(e) => {
+            error!("Failed to initialize NVML: {}", e);
+            None
+        }
+    };
+
+    // Initialize monitoring
+    let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
+    let _monitor_thread = if runtime_config.monitoring.enabled {
+        let monitor_config = MonitorConfig {
+            enabled: true,
+            sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
+        };
+        match spawn_monitor_thread(monitor_config, process_registry.clone(), nvml) {
+            Ok(handle) => {
+                info!(
+                    "Resource monitoring enabled (interval: {}ms)",
+                    runtime_config.monitoring.sample_interval_ms
+                );
+                Some(handle)
+            }
+            Err(e) => {
+                error!("Failed to start monitoring thread: {}", e);
+                None
+            }
+        }
+    } else {
+        debug!("Resource monitoring disabled");
+        None
+    };
+
+    // Prepare node execution contexts
+    let container_names = HashSet::new();
+    let NodeContextClasses {
+        container_contexts: _,
+        non_container_node_contexts: pure_node_contexts,
+    } = prepare_node_contexts(launch_dump, &node_log_dir, &container_names)?;
+
+    info!("Spawning node...");
+    let node_tasks = spawn_nodes(pure_node_contexts, Some(process_registry.clone()))
+        .into_iter()
+        .map(|future| future.boxed());
+
+    let mut wait_futures: Vec<_> = node_tasks.collect();
+    info!("Collected {} futures to wait on", wait_futures.len());
+
+    // Wait for node to complete or receive signal
+    #[cfg(unix)]
+    let result = {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to register SIGTERM handler");
+
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
+            }
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM, shutting down gracefully...");
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
+            }
+            _ = async {
+                while !wait_futures.is_empty() {
+                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                    if let Err(err) = result {
+                        error!("{err}");
+                    }
+                    let future_to_discard = wait_futures.remove(ix);
+                    drop(future_to_discard);
+                }
+            } => {
+                info!("All tasks completed normally");
+                Ok(())
+            }
+        }
+    };
+
+    #[cfg(not(unix))]
+    let result = tokio::select! {
+        _ = tokio::signal::ctrl_c() => {
+            info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+            kill_all_descendants();
+            drop(wait_futures);
+            info!("All child processes terminated");
+            Ok(())
+        }
+        _ = async {
+            while !wait_futures.is_empty() {
+                let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                if let Err(err) = result {
+                    error!("{err}");
+                }
+                let future_to_discard = wait_futures.remove(ix);
+                drop(future_to_discard);
+            }
+        } => {
+            info!("All tasks completed normally");
+            Ok(())
+        }
+    };
+
+    result
 }
 
 /// Handle the 'dump' subcommand (dump only, no replay)
-fn handle_dump(_args: &options::DumpArgs) -> eyre::Result<()> {
-    error!("The 'dump' subcommand is not yet implemented.");
-    error!("This will be implemented in Phase 2 of the roadmap.");
-    error!("");
-    error!("For now, please use:");
-    error!("  ros2 run dump_launch dump_launch <package> <launch_file> --output <file>");
-    std::process::exit(1);
+fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
+    use crate::dump_launcher::DumpLauncher;
+    use tokio::runtime::Runtime;
+
+    info!("Recording launch execution (dump only, no replay)...");
+
+    // Create tokio runtime for async operations
+    let runtime = Runtime::new()?;
+
+    // Run dump phase
+    runtime.block_on(async {
+        let launcher = DumpLauncher::new()
+            .wrap_err("Failed to initialize dump_launch. Ensure ROS workspace is sourced.")?;
+
+        match &args.subcommand {
+            options::DumpSubcommand::Launch(launch_args) => {
+                launcher
+                    .dump_launch(
+                        &launch_args.package_or_path,
+                        launch_args.launch_file.as_deref(),
+                        &launch_args.launch_arguments,
+                        &args.output,
+                    )
+                    .await?;
+            }
+            options::DumpSubcommand::Run(run_args) => {
+                launcher
+                    .dump_run(
+                        &run_args.package,
+                        &run_args.executable,
+                        &run_args.args,
+                        &args.output,
+                    )
+                    .await?;
+            }
+        }
+
+        Ok::<(), eyre::Report>(())
+    })?;
+
+    info!("Dump completed successfully: {}", args.output.display());
+    info!(
+        "To replay: play_launch replay --input-file {}",
+        args.output.display()
+    );
+
+    Ok(())
 }
 
 /// Handle the 'replay' subcommand

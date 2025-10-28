@@ -476,6 +476,7 @@ mod tests {
             rosout_logs: None,
             stdout_logs: None,
             enclave: None,
+            env: HashMap::new(),
         };
         let result = cmdline.to_cmdline(false);
         assert!(result.contains(&"--ros-args".to_string()));
@@ -506,6 +507,7 @@ mod tests {
             rosout_logs: None,
             stdout_logs: None,
             enclave: None,
+            env: HashMap::new(),
         };
         let _ = cmdline.to_command(false);
     }

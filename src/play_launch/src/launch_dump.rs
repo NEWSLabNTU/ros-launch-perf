@@ -72,6 +72,7 @@ pub struct ComposableNodeRecord {
     #[serde(default)]
     pub extra_args: HashMap<String, String>,
 
+    #[allow(dead_code)]
     pub env: Option<Vec<(String, String)>>,
 }
 
