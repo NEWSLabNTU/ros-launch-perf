@@ -11,8 +11,7 @@ AUTOWARE_SETUP="$AUTOWARE_PATH/install/setup.bash"
 
 # Default configuration
 MAP_PATH="${MAP_PATH:-$HOME/autoware_map/sample-map-planning}"
-SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-300}"
-LOAD_TIMEOUT="${LOAD_TIMEOUT:-60000}"
+# Note: Service timeout and load timeout are now configured in autoware_config.yaml
 
 # Check Autoware installation
 if [ ! -L "$AUTOWARE_LINK" ]; then
@@ -64,16 +63,13 @@ if [ ! -f "$SCRIPT_DIR/cyclonedds.xml" ]; then
     exit 1
 fi
 
-# Dump launch execution
-ros2 run dump_launch dump_launch \
-    autoware_launch planning_simulator.launch.xml \
-    map_path:="$MAP_PATH"
-
-# Replay with play_launch
-echo "Starting play_launch with CYCLONEDDS_URI=$CYCLONEDDS_URI"
-ros2 run play_launch play_launch \
+# Single command: dump and replay in one step
+# Using autoware_config.yaml for fine-grained control (service readiness, timeouts, etc.)
+# NOTE: Flags must come BEFORE positional arguments (due to trailing_var_arg in clap)
+echo "Starting Autoware with play_launch (CYCLONEDDS_URI=$CYCLONEDDS_URI)"
+play_launch launch \
     --enable-monitoring \
     --monitor-interval-ms 1000 \
-    --wait-for-service-ready \
-    --service-ready-timeout-secs "$SERVICE_TIMEOUT" \
-    --load-node-timeout-millis "$LOAD_TIMEOUT"
+    --config "$SCRIPT_DIR/autoware_config.yaml" \
+    autoware_launch planning_simulator.launch.xml \
+    map_path:="$MAP_PATH"

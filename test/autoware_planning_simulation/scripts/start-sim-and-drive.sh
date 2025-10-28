@@ -11,8 +11,7 @@ AUTOWARE_SETUP="$AUTOWARE_PATH/install/setup.bash"
 
 # Default configuration
 MAP_PATH="${MAP_PATH:-$HOME/autoware_map/sample-map-planning}"
-SERVICE_TIMEOUT="${SERVICE_TIMEOUT:-300}"
-LOAD_TIMEOUT="${LOAD_TIMEOUT:-60000}"
+# Note: Service timeout and load timeout are now configured in autoware_config.yaml
 
 # Check Autoware installation
 if [ ! -L "$AUTOWARE_LINK" ]; then
@@ -40,19 +39,23 @@ start_simulator() {
     echo "[Simulator] Starting Autoware planning simulator..."
     cd "$AUTOWARE_PATH/install"
     source setup.bash 2>&1 >/dev/null
+
+    # Source ros-launch-perf workspace
+    ROS_LAUNCH_PERF_WS="$(cd "$SCRIPT_DIR/../.." && pwd)"
+    source "$ROS_LAUNCH_PERF_WS/install/setup.bash" 2>&1 >/dev/null
+
     cd "$SCRIPT_DIR"
 
     # Set CycloneDDS configuration
     export CYCLONEDDS_URI="file://$SCRIPT_DIR/cyclonedds.xml"
 
-    ros2 run dump_launch dump_launch \
+    # Single command: dump and replay in one step
+    # Using autoware_config.yaml for fine-grained control (service readiness, timeouts, etc.)
+    # NOTE: Flags must come BEFORE positional arguments (due to trailing_var_arg in clap)
+    play_launch launch \
+        --config "$SCRIPT_DIR/autoware_config.yaml" \
         autoware_launch planning_simulator.launch.xml \
         map_path:="$MAP_PATH"
-
-    ros2 run play_launch play_launch \
-        --wait-for-service-ready \
-        --service-ready-timeout-secs "$SERVICE_TIMEOUT" \
-        --load-node-timeout-millis "$LOAD_TIMEOUT"
 }
 
 run_test() {
@@ -83,7 +86,7 @@ run_test() {
 
 # Export functions and variables for parallel
 export -f start_simulator run_test
-export AUTOWARE_PATH SCRIPT_DIR MAP_PATH SERVICE_TIMEOUT LOAD_TIMEOUT
+export AUTOWARE_PATH SCRIPT_DIR MAP_PATH
 
 # Run both tasks in parallel using GNU Parallel
 # --line-buffer: Print output line-by-line (not mixed)
