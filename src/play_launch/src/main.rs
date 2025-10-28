@@ -21,7 +21,7 @@ use crate::{
         spawn_nodes, spawn_or_load_composable_nodes, ComposableNodeExecutionConfig,
         ComposableNodeTasks, SpawnComposableNodeConfig,
     },
-    launch_dump::{load_and_transform_node_records, load_launch_dump, NodeContainerRecord},
+    launch_dump::{load_launch_dump, NodeContainerRecord},
     options::Options,
     resource_monitor::{spawn_monitor_thread, MonitorConfig},
 };
@@ -33,7 +33,6 @@ use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{self, prelude::*},
     path::{Path, PathBuf},
     process,
     sync::{Arc, Mutex, OnceLock},
@@ -446,75 +445,52 @@ fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
 fn handle_replay(args: &options::ReplayArgs) -> eyre::Result<()> {
     let input_file = &args.input_file;
 
-    if args.common.print_shell {
-        generate_shell(input_file, &args.common)?;
-    } else {
-        // Start ROS service discovery thread if service checking is enabled
-        if args.common.wait_for_service_ready {
-            info!("Starting ROS service discovery thread for container readiness checking...");
-            if args.common.service_ready_timeout_secs == 0 {
-                info!("Container service readiness will wait indefinitely");
-            } else {
-                info!(
-                    "Container service readiness timeout: {}s",
-                    args.common.service_ready_timeout_secs
-                );
-            }
+    // Load runtime configuration to check service readiness settings
+    let runtime_config = config::load_runtime_config(
+        args.common.config.as_deref(),
+        args.common.enable_monitoring,
+        args.common.monitor_interval_ms,
+    )?;
 
-            match container_readiness::start_service_discovery_thread() {
-                Ok(handle) => {
-                    SERVICE_DISCOVERY_HANDLE
-                        .set(handle)
-                        .expect("SERVICE_DISCOVERY_HANDLE already set");
-                    info!("ROS service discovery thread started successfully");
-                }
-                Err(e) => {
-                    error!("Failed to start ROS service discovery thread: {}", e);
-                    error!("Falling back to process-based container checking");
-                }
-            }
+    // Start ROS service discovery thread if service checking is enabled (default: true)
+    if runtime_config.container_readiness.wait_for_service_ready {
+        info!("Starting ROS service discovery thread for container readiness checking...");
+        if runtime_config
+            .container_readiness
+            .service_ready_timeout_secs
+            == 0
+        {
+            info!("Container service readiness will wait indefinitely");
         } else {
-            info!("Service readiness checking disabled (use --wait-for-service-ready to enable)");
+            info!(
+                "Container service readiness timeout: {}s",
+                runtime_config
+                    .container_readiness
+                    .service_ready_timeout_secs
+            );
         }
 
-        // Build the async runtime.
-        let runtime = Runtime::new()?;
-
-        // Run the whole playing task in the runtime.
-        runtime.block_on(play(input_file, &args.common))?;
+        match container_readiness::start_service_discovery_thread() {
+            Ok(handle) => {
+                SERVICE_DISCOVERY_HANDLE
+                    .set(handle)
+                    .expect("SERVICE_DISCOVERY_HANDLE already set");
+                info!("ROS service discovery thread started successfully");
+            }
+            Err(e) => {
+                error!("Failed to start ROS service discovery thread: {}", e);
+                error!("Falling back to process-based container checking");
+            }
+        }
+    } else {
+        info!("Service readiness checking disabled (set container_readiness.wait_for_service_ready: true in config to enable)");
     }
 
-    Ok(())
-}
+    // Build the async runtime.
+    let runtime = Runtime::new()?;
 
-/// Generate shell script from the launch record.
-fn generate_shell(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
-    let log_dir = create_log_dir(&common.log_dir)?;
-    let params_files_dir = log_dir.join("params_files");
-    fs::create_dir(&params_files_dir)?;
-
-    let launch_dump = load_launch_dump(input_file)
-        .wrap_err_with(|| format!("unable to read launch file {}", input_file.display()))?;
-
-    let process_records = load_and_transform_node_records(&launch_dump, &params_files_dir)?;
-    let process_shells = process_records
-        .par_iter()
-        .map(|(_record, cmdline)| cmdline.to_shell(false));
-
-    let load_node_shells = launch_dump
-        .load_node
-        .par_iter()
-        .map(|request| request.to_shell(common.standalone_composable_nodes));
-
-    let mut shells: Vec<_> = process_shells.chain(load_node_shells).collect();
-    shells.par_sort_unstable();
-
-    let mut stdout = io::stdout();
-    writeln!(stdout, "#!/bin/sh")?;
-    for shell in shells {
-        stdout.write_all(&shell)?;
-        stdout.write_all(b"\n")?;
-    }
+    // Run the whole playing task in the runtime.
+    runtime.block_on(play(input_file, &args.common))?;
 
     Ok(())
 }
@@ -680,20 +656,32 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
 
     info!("Proceeding with execution...");
 
-    // Create composable node execution configuration
+    // Create composable node execution configuration using runtime config values
     let composable_node_config = ComposableNodeExecutionConfig {
         standalone_composable_nodes: common.standalone_composable_nodes,
         load_orphan_composable_nodes: common.load_orphan_composable_nodes,
         spawn_config: SpawnComposableNodeConfig {
-            max_concurrent_spawn: common.max_concurrent_load_node_spawn,
-            max_attempts: common.load_node_attempts,
-            wait_timeout: Duration::from_millis(common.load_node_timeout_millis),
+            max_concurrent_spawn: runtime_config
+                .composable_node_loading
+                .max_concurrent_load_node_spawn,
+            max_attempts: runtime_config.composable_node_loading.load_node_attempts,
+            wait_timeout: Duration::from_millis(
+                runtime_config
+                    .composable_node_loading
+                    .load_node_timeout_millis,
+            ),
         },
-        load_node_delay: Duration::from_millis(common.delay_load_node_millis),
-        service_wait_config: if common.wait_for_service_ready {
+        load_node_delay: Duration::from_millis(
+            runtime_config
+                .composable_node_loading
+                .delay_load_node_millis,
+        ),
+        service_wait_config: if runtime_config.container_readiness.wait_for_service_ready {
             Some(crate::container_readiness::ContainerWaitConfig::new(
-                common.service_ready_timeout_secs,
-                common.service_poll_interval_ms,
+                runtime_config
+                    .container_readiness
+                    .service_ready_timeout_secs,
+                runtime_config.container_readiness.service_poll_interval_ms,
             ))
         } else {
             None

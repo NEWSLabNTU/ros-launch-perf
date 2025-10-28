@@ -1,14 +1,11 @@
-use crate::node_cmdline::NodeCommandLine;
-use eyre::{bail, WrapErr};
 use itertools::{chain, Itertools};
-use rayon::prelude::*;
 use serde::Deserialize;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    fs::{self, File},
+    fs::File,
     io::BufReader,
-    path::{Path, PathBuf, MAIN_SEPARATOR},
+    path::{Path, PathBuf},
     process::Command,
 };
 
@@ -24,6 +21,8 @@ pub struct LaunchDump {
     /// Currently lifecycle nodes require manual intervention and are not automatically handled.
     #[allow(dead_code)]
     pub lifecycle_node: Vec<String>,
+    /// File data cache for parameter files (used by removed print_shell functionality)
+    #[allow(dead_code)]
     pub file_data: HashMap<PathBuf, String>,
 }
 
@@ -49,6 +48,8 @@ pub struct NodeRecord {
     pub remaps: Vec<(String, String)>,
     pub ros_args: Option<Vec<String>>,
     pub args: Option<Vec<String>>,
+    /// Raw command line (used by removed print_shell functionality)
+    #[allow(dead_code)]
     pub cmd: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
 }
@@ -237,62 +238,4 @@ pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
     info!("JSON deserialization complete!");
 
     Ok(launch_dump)
-}
-
-pub fn load_and_transform_node_records<'a>(
-    launch_dump: &'a LaunchDump,
-    params_dir: &Path,
-) -> eyre::Result<Vec<(&'a NodeRecord, NodeCommandLine)>> {
-    let LaunchDump {
-        node, file_data, ..
-    } = launch_dump;
-
-    let prepare: Result<Vec<_>, _> = node
-        .par_iter()
-        .map(|record| {
-            let mut cmdline = NodeCommandLine::from_cmdline(&record.cmd)?;
-
-            // Copy log_config_file to params dir.
-            if let Some(src_path) = &cmdline.log_config_file {
-                let Some(data) = file_data.get(src_path) else {
-                    bail!(
-                        "unable to find cached content for parameters file {}",
-                        src_path.display()
-                    );
-                };
-                cmdline.log_config_file = Some(copy_cached_data(src_path, params_dir, data)?);
-            }
-
-            // Copy params_file to params dir.
-            cmdline.params_files = cmdline
-                .params_files
-                .iter()
-                .map(|src_path| {
-                    let Some(data) = file_data.get(src_path) else {
-                        bail!(
-                            "unable to find cached content for parameters file {}",
-                            src_path.display()
-                        );
-                    };
-                    let tgt_path = copy_cached_data(src_path, params_dir, data)?;
-                    eyre::Ok(tgt_path)
-                })
-                .try_collect()?;
-
-            eyre::Ok((record, cmdline))
-        })
-        .collect();
-
-    prepare
-}
-
-fn copy_cached_data(src_path: &Path, tgt_dir: &Path, data: &str) -> eyre::Result<PathBuf> {
-    let file_name = src_path
-        .to_str()
-        .ok_or_else(|| eyre::eyre!("path contains invalid UTF-8: {}", src_path.display()))?
-        .replace(MAIN_SEPARATOR, "@");
-    let tgt_path = tgt_dir.join(file_name);
-    fs::write(&tgt_path, data)
-        .wrap_err_with(|| format!("unable to create parameters file {}", tgt_path.display()))?;
-    eyre::Ok(tgt_path)
 }

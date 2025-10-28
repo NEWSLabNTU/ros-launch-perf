@@ -126,138 +126,6 @@ impl NodeCommandLine {
         })
     }
 
-    /// Construct from command line arguments.
-    pub fn from_cmdline(cmdline: impl IntoIterator<Item = impl AsRef<str>>) -> eyre::Result<Self> {
-        let (command, user_args, ros_args) = {
-            let mut iter = cmdline.into_iter();
-            let Some(command) = iter.next() else {
-                bail!("the command line must not be empty");
-            };
-
-            let mut user_args = vec![];
-            let mut ros_args = vec![];
-
-            'arg_loop: loop {
-                loop {
-                    let Some(arg) = iter.next() else {
-                        break 'arg_loop;
-                    };
-
-                    match arg.as_ref() {
-                        "--ros-args" => break,
-                        arg => {
-                            user_args.push(arg.to_string());
-                        }
-                    }
-                }
-
-                loop {
-                    let Some(arg) = iter.next() else {
-                        break 'arg_loop;
-                    };
-
-                    match arg.as_ref() {
-                        "--ros-args" => continue,
-                        "--" => break,
-                        _ => {
-                            ros_args.push(arg);
-                        }
-                    }
-                }
-            }
-
-            (command.as_ref().to_string(), user_args, ros_args)
-        };
-
-        let mut iter = ros_args.into_iter();
-        let mut remaps = HashMap::new();
-        let mut params = HashMap::new();
-        let mut params_files = HashSet::new();
-        let mut log_level = None;
-        let mut log_config_file = None;
-        let mut rosout_logs = None;
-        let mut stdout_logs = None;
-        let mut enclave = None;
-
-        loop {
-            let Some(arg) = iter.next() else { break };
-
-            match arg.as_ref() {
-                "-r" | "--remap" => {
-                    let Some(arg2) = iter.next() else {
-                        bail!("expect an argument after -r/--remap");
-                    };
-                    let Some((name, value)) = arg2.as_ref().split_once(":=") else {
-                        bail!("invalid assignment {}", arg2.as_ref())
-                    };
-                    remaps.insert(name.to_string(), value.to_string());
-                }
-                "-p" | "--param" => {
-                    let Some(arg2) = iter.next() else {
-                        bail!("expect an argument after -p/--param");
-                    };
-                    let Some((name, value)) = arg2.as_ref().split_once(":=") else {
-                        bail!("invalid assignment {}", arg2.as_ref())
-                    };
-                    params.insert(name.to_string(), value.to_string());
-                }
-                "--params-file" => {
-                    let Some(arg2) = iter.next() else {
-                        bail!("expect an argument after -params-file");
-                    };
-                    params_files.insert(PathBuf::from(arg2.as_ref()));
-                }
-                "--log-level" => {
-                    let Some(level) = iter.next() else {
-                        bail!("expect an argument after --log-level");
-                    };
-                    log_level = Some(level.as_ref().to_string());
-                }
-                "--log-config-file" => {
-                    let Some(path) = iter.next() else {
-                        bail!("expect an argument after --log-config-file");
-                    };
-                    log_config_file = Some(PathBuf::from(path.as_ref()));
-                }
-                "--enable-rosout-logs" => {
-                    rosout_logs = Some(true);
-                }
-                "--disable-rosout-logs" => {
-                    rosout_logs = Some(false);
-                }
-                "--enable-stdout-logs" => {
-                    stdout_logs = Some(true);
-                }
-                "--disable-stdout-logs" => {
-                    stdout_logs = Some(false);
-                }
-                "-e" | "--enclave" => {
-                    let Some(arg2) = iter.next() else {
-                        bail!("expect an argument after -e/--enclave");
-                    };
-                    enclave = Some(arg2.as_ref().to_string())
-                }
-                arg => {
-                    bail!("unexpected argument {arg} after --ros-arg");
-                }
-            }
-        }
-
-        Ok(Self {
-            command: vec![command],
-            user_args,
-            remaps,
-            params,
-            params_files,
-            log_level,
-            log_config_file,
-            rosout_logs,
-            stdout_logs,
-            enclave,
-            env: HashMap::new(),
-        })
-    }
-
     /// Create command line arguments.
     pub fn to_cmdline(&self, long_args: bool) -> Vec<String> {
         let Self {
@@ -419,51 +287,6 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     #[test]
-    fn test_parse_basic_cmdline() {
-        let cmdline = vec!["ros2", "run", "pkg", "node"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.command, vec!["ros2"]);
-        assert_eq!(result.user_args, vec!["run", "pkg", "node"]);
-    }
-
-    #[test]
-    fn test_parse_with_remaps() {
-        let cmdline = vec!["cmd", "arg", "--ros-args", "-r", "src:=tgt", "--"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.remaps.get("src"), Some(&"tgt".to_string()));
-        assert_eq!(result.user_args, vec!["arg"]);
-    }
-
-    #[test]
-    fn test_parse_with_params() {
-        let cmdline = vec!["cmd", "--ros-args", "-p", "param:=value", "--"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.params.get("param"), Some(&"value".to_string()));
-    }
-
-    #[test]
-    fn test_parse_enable_stdout_logs() {
-        // Test the bug fix!
-        let cmdline = vec!["cmd", "--ros-args", "--enable-stdout-logs", "--"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.stdout_logs, Some(true));
-    }
-
-    #[test]
-    fn test_parse_disable_stdout_logs() {
-        let cmdline = vec!["cmd", "--ros-args", "--disable-stdout-logs", "--"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.stdout_logs, Some(false));
-    }
-
-    #[test]
-    fn test_parse_log_level() {
-        let cmdline = vec!["cmd", "--ros-args", "--log-level", "debug", "--"];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert_eq!(result.log_level, Some("debug".to_string()));
-    }
-
-    #[test]
     fn test_generate_cmdline_with_remaps() {
         let cmdline = NodeCommandLine {
             command: vec!["cmd".to_string()],
@@ -485,15 +308,6 @@ mod tests {
     }
 
     #[test]
-    fn test_roundtrip_parse_generate() {
-        let original = vec!["cmd", "--ros-args", "-p", "x:=1", "--"];
-        let parsed = NodeCommandLine::from_cmdline(original.clone()).unwrap();
-        let generated = parsed.to_cmdline(false);
-        let reparsed = NodeCommandLine::from_cmdline(generated).unwrap();
-        assert_eq!(parsed.params, reparsed.params);
-    }
-
-    #[test]
     #[should_panic(expected = "command line must not be empty")]
     fn test_command_line_must_not_be_empty() {
         let cmdline = NodeCommandLine {
@@ -510,27 +324,5 @@ mod tests {
             env: HashMap::new(),
         };
         let _ = cmdline.to_command(false);
-    }
-
-    #[test]
-    fn test_parse_multiple_ros_args() {
-        let cmdline = vec![
-            "cmd",
-            "user1",
-            "--ros-args",
-            "-p",
-            "p1:=v1",
-            "--",
-            "user2",
-            "--ros-args",
-            "-r",
-            "a:=b",
-            "--",
-        ];
-        let result = NodeCommandLine::from_cmdline(cmdline).unwrap();
-        assert!(result.user_args.contains(&"user1".to_string()));
-        assert!(result.user_args.contains(&"user2".to_string()));
-        assert_eq!(result.params.get("p1"), Some(&"v1".to_string()));
-        assert_eq!(result.remaps.get("a"), Some(&"b".to_string()));
     }
 }

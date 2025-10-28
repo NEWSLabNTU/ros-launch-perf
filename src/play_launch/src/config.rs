@@ -10,6 +10,14 @@ pub struct RuntimeConfig {
     #[serde(default)]
     pub monitoring: MonitoringSettings,
 
+    /// Composable node loading settings
+    #[serde(default)]
+    pub composable_node_loading: ComposableNodeLoadingSettings,
+
+    /// Container readiness checking settings
+    #[serde(default)]
+    pub container_readiness: ContainerReadinessSettings,
+
     /// Per-process configurations
     #[serde(default)]
     pub processes: Vec<ProcessConfig>,
@@ -51,6 +59,88 @@ fn default_sample_interval() -> u64 {
 }
 fn default_true() -> bool {
     true
+}
+
+/// Composable node loading settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct ComposableNodeLoadingSettings {
+    /// Delay before loading composable nodes (milliseconds)
+    #[serde(default = "default_delay_load_node_millis")]
+    pub delay_load_node_millis: u64,
+
+    /// Timeout for loading each composable node (milliseconds)
+    #[serde(default = "default_load_node_timeout_millis")]
+    pub load_node_timeout_millis: u64,
+
+    /// Maximum retry attempts for loading composable nodes
+    #[serde(default = "default_load_node_attempts")]
+    pub load_node_attempts: usize,
+
+    /// Maximum concurrent composable node loading operations
+    #[serde(default = "default_max_concurrent_load_node_spawn")]
+    pub max_concurrent_load_node_spawn: usize,
+}
+
+impl Default for ComposableNodeLoadingSettings {
+    fn default() -> Self {
+        Self {
+            delay_load_node_millis: default_delay_load_node_millis(),
+            load_node_timeout_millis: default_load_node_timeout_millis(),
+            load_node_attempts: default_load_node_attempts(),
+            max_concurrent_load_node_spawn: default_max_concurrent_load_node_spawn(),
+        }
+    }
+}
+
+fn default_delay_load_node_millis() -> u64 {
+    2000
+}
+fn default_load_node_timeout_millis() -> u64 {
+    30000
+}
+fn default_load_node_attempts() -> usize {
+    3
+}
+fn default_max_concurrent_load_node_spawn() -> usize {
+    10
+}
+
+/// Container readiness checking settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContainerReadinessSettings {
+    /// Wait for container services to be available via ROS service discovery
+    /// Default: true (changed from false - service readiness is now default behavior)
+    #[serde(default = "default_wait_for_service_ready")]
+    pub wait_for_service_ready: bool,
+
+    /// Maximum time to wait for each container service (seconds)
+    /// Set to 0 for unlimited wait time
+    #[serde(default = "default_service_ready_timeout_secs")]
+    pub service_ready_timeout_secs: u64,
+
+    /// Interval for polling container service availability (milliseconds)
+    #[serde(default = "default_service_poll_interval_ms")]
+    pub service_poll_interval_ms: u64,
+}
+
+impl Default for ContainerReadinessSettings {
+    fn default() -> Self {
+        Self {
+            wait_for_service_ready: default_wait_for_service_ready(),
+            service_ready_timeout_secs: default_service_ready_timeout_secs(),
+            service_poll_interval_ms: default_service_poll_interval_ms(),
+        }
+    }
+}
+
+fn default_wait_for_service_ready() -> bool {
+    true // Changed from false - service readiness is now the default
+}
+fn default_service_ready_timeout_secs() -> u64 {
+    120
+}
+fn default_service_poll_interval_ms() -> u64 {
+    500
 }
 
 /// Configuration for individual process control
@@ -171,6 +261,8 @@ impl ProcessConfig {
 #[derive(Debug, Clone)]
 pub struct ResolvedRuntimeConfig {
     pub monitoring: ResolvedMonitoringConfig,
+    pub composable_node_loading: ComposableNodeLoadingSettings,
+    pub container_readiness: ContainerReadinessSettings,
 }
 
 /// Resolved monitoring configuration
@@ -285,6 +377,8 @@ pub fn load_runtime_config(
             monitor_patterns: config.monitoring.monitor_patterns,
             process_configs: config.processes,
         },
+        composable_node_loading: config.composable_node_loading,
+        container_readiness: config.container_readiness,
     })
 }
 
@@ -299,6 +393,25 @@ mod tests {
         assert_eq!(config.monitoring.sample_interval_ms, 1000);
         assert!(config.monitoring.monitor_all_nodes);
         assert!(config.processes.is_empty());
+
+        // Test composable node loading defaults
+        assert_eq!(config.composable_node_loading.delay_load_node_millis, 2000);
+        assert_eq!(
+            config.composable_node_loading.load_node_timeout_millis,
+            30000
+        );
+        assert_eq!(config.composable_node_loading.load_node_attempts, 3);
+        assert_eq!(
+            config
+                .composable_node_loading
+                .max_concurrent_load_node_spawn,
+            10
+        );
+
+        // Test container readiness defaults
+        assert!(config.container_readiness.wait_for_service_ready); // Now defaults to true
+        assert_eq!(config.container_readiness.service_ready_timeout_secs, 120);
+        assert_eq!(config.container_readiness.service_poll_interval_ms, 500);
     }
 
     #[test]
