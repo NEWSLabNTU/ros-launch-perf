@@ -55,9 +55,9 @@ class TestDumpLaunchIntegration:
             assert isinstance(data["node"], list), "'node' should be a list"
 
             # The talker_listener launch file should create at least 2 nodes
-            assert (
-                len(data["node"]) >= 2
-            ), "Expected at least 2 nodes (talker and listener)"
+            assert len(data["node"]) >= 2, (
+                "Expected at least 2 nodes (talker and listener)"
+            )
 
             # Verify node structure
             for node in data["node"]:
@@ -66,9 +66,9 @@ class TestDumpLaunchIntegration:
 
             # Check for expected nodes (talker and listener)
             executables = [node.get("executable") for node in data["node"]]
-            assert (
-                "talker" in executables or "listener" in executables
-            ), "Expected to find talker or listener in executables"
+            assert "talker" in executables or "listener" in executables, (
+                "Expected to find talker or listener in executables"
+            )
 
     @pytest.mark.integration
     def test_dump_launch_creates_valid_json(self):
@@ -126,9 +126,9 @@ class TestDumpLaunchIntegration:
 
             # Basic structure validation
             assert isinstance(data, dict), "Output should be a JSON object"
-            assert (
-                "node" in data or "container" in data or "load_node" in data
-            ), "Output should contain at least one of: node, container, load_node"
+            assert "node" in data or "container" in data or "load_node" in data, (
+                "Output should contain at least one of: node, container, load_node"
+            )
 
     @pytest.mark.integration
     def test_dump_launch_command_availability(self):
@@ -151,9 +151,9 @@ class TestDumpLaunchIntegration:
             0,
             2,
         ], f"dump_launch command not available: {result.stderr}"
-        assert (
-            "usage" in result.stdout.lower() or "usage" in result.stderr.lower()
-        ), "Expected usage information in help output"
+        assert "usage" in result.stdout.lower() or "usage" in result.stderr.lower(), (
+            "Expected usage information in help output"
+        )
 
     @pytest.mark.integration
     def test_dump_launch_with_nonexistent_package(self):

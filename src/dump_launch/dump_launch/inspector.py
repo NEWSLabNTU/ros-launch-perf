@@ -70,9 +70,7 @@ class LaunchInspector:
         )
 
         # Setup storage for state.
-        self._entity_future_pairs = (
-            []
-        )  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
+        self._entity_future_pairs = []  # type: List[Tuple[LaunchDescriptionEntity, asyncio.Future]]
 
         # Used to allow asynchronous use of self.__loop_from_run_thread without
         # it being set to None by run() as it exits.

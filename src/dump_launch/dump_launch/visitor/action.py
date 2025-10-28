@@ -6,8 +6,7 @@ from launch.events import ExecutionComplete  # noqa
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
 from launch.utilities import is_a
-from launch_ros.actions.composable_node_container import \
-    ComposableNodeContainer
+from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.actions.lifecycle_node import LifecycleNode
 from launch_ros.actions.load_composable_nodes import LoadComposableNodes
 from launch_ros.actions.node import Node

@@ -11,8 +11,7 @@ from ament_index_python.packages import PackageNotFoundError
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import AnyLaunchDescriptionSource
-from ros2launch.api import (MultipleLaunchFilesError,
-                            get_share_file_path_from_package)
+from ros2launch.api import MultipleLaunchFilesError, get_share_file_path_from_package
 
 from .inspector import LaunchInspector
 

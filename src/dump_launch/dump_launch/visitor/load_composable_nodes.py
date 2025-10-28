@@ -6,13 +6,16 @@ import launch.logging
 from launch.action import Action
 from launch.launch_context import LaunchContext
 from launch.some_substitutions_type import SomeSubstitutionsType_types_tuple
-from launch.utilities import (is_a_subclass,
-                              normalize_to_list_of_substitutions,
-                              perform_substitutions)
-from launch_ros.actions.composable_node_container import \
-    ComposableNodeContainer
+from launch.utilities import (
+    is_a_subclass,
+    normalize_to_list_of_substitutions,
+    perform_substitutions,
+)
+from launch_ros.actions.composable_node_container import ComposableNodeContainer
 from launch_ros.actions.load_composable_nodes import (
-    LoadComposableNodes, get_composable_node_load_request)
+    LoadComposableNodes,
+    get_composable_node_load_request,
+)
 from launch_ros.ros_adapters import get_ros_node
 from launch_ros.utilities import add_node_name, get_node_name_count
 

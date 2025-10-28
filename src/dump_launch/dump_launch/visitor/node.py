@@ -3,8 +3,11 @@ from typing import Dict, List, Optional, Union
 import launch
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch.utilities import (is_a, normalize_to_list_of_substitutions,
-                              perform_substitutions)
+from launch.utilities import (
+    is_a,
+    normalize_to_list_of_substitutions,
+    perform_substitutions,
+)
 from launch_ros.actions.node import Node
 from launch_ros.descriptions import Parameter
 from launch_ros.utilities import add_node_name, get_node_name_count

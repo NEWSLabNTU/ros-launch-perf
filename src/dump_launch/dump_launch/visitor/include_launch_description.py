@@ -4,8 +4,7 @@ from launch.actions.include_launch_description import IncludeLaunchDescription
 from launch.actions.set_launch_configuration import SetLaunchConfiguration
 from launch.launch_context import LaunchContext
 from launch.launch_description_entity import LaunchDescriptionEntity
-from launch.utilities import (normalize_to_list_of_substitutions,
-                              perform_substitutions)
+from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
 
 from ..launch_dump import LaunchDump
 
@@ -35,9 +34,7 @@ def visit_include_launch_description(
         perform_substitutions(context, normalize_to_list_of_substitutions(arg_name))
         for arg_name, arg_value in include.launch_arguments
     ]
-    declared_launch_arguments = (
-        launch_description.get_launch_arguments_with_include_launch_description_actions()
-    )
+    declared_launch_arguments = launch_description.get_launch_arguments_with_include_launch_description_actions()
     for argument, ild_actions in declared_launch_arguments:
         if argument._conditionally_included or argument.default_value is not None:
             continue
