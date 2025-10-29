@@ -967,8 +967,8 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
                             info!("Press Ctrl-C again to force terminate");
                         }
                         2 => {
-                            info!("Force terminating stubborn processes (SIGTERM)...");
-                            kill_process_group(pgid, Signal::SIGTERM);
+                            info!("Force terminating stubborn processes (SIGQUIT)...");
+                            kill_process_group(pgid, Signal::SIGQUIT);
                             info!("Press Ctrl-C once more for immediate kill");
                         }
                         3 => {
