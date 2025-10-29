@@ -44,6 +44,14 @@ use tracing::{debug, error, info, warn};
 /// Global handle for ROS service discovery (optional, only initialized if service checking enabled)
 static SERVICE_DISCOVERY_HANDLE: OnceLock<ServiceDiscoveryHandle> = OnceLock::new();
 
+/// Global flag for verbose logging
+static VERBOSE_LOGGING: OnceLock<bool> = OnceLock::new();
+
+/// Check if verbose logging is enabled
+pub fn is_verbose() -> bool {
+    VERBOSE_LOGGING.get().copied().unwrap_or(false)
+}
+
 /// Kill all descendant processes of the current process recursively
 #[cfg(unix)]
 fn kill_all_descendants() {
@@ -117,9 +125,37 @@ fn kill_all_descendants() {
     // No-op on non-Unix systems
 }
 
+/// Extract verbose flag from command options
+fn get_verbose_flag(opts: &Options) -> bool {
+    match &opts.command {
+        options::Command::Launch(args) => args.common.verbose,
+        options::Command::Run(args) => args.common.verbose,
+        options::Command::Dump(_) => false, // Dump doesn't use CommonOptions
+        options::Command::Replay(args) => args.common.verbose,
+    }
+}
+
 fn main() -> eyre::Result<()> {
-    // install global collector configured based on RUST_LOG env var.
-    tracing_subscriber::fmt::init();
+    // Parse command-line options first (before initializing tracing)
+    let opts = Options::parse();
+
+    // Store verbose flag globally for conditional logging
+    let verbose = get_verbose_flag(&opts);
+    VERBOSE_LOGGING
+        .set(verbose)
+        .expect("VERBOSE_LOGGING already set");
+
+    // Initialize tracing subscriber with INFO as default level
+    // Priority: RUST_LOG > default (INFO)
+    if std::env::var("RUST_LOG").is_ok() {
+        // RUST_LOG env var takes precedence (for development/debugging)
+        tracing_subscriber::fmt::init();
+    } else {
+        // Default to INFO level - verbose flag controls detail, not level
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::INFO)
+            .init();
+    }
 
     // Debug: Check AMENT_PREFIX_PATH at startup
     if let Ok(ament_path) = std::env::var("AMENT_PREFIX_PATH") {
@@ -130,8 +166,6 @@ fn main() -> eyre::Result<()> {
     } else {
         warn!("AMENT_PREFIX_PATH NOT SET!");
     }
-
-    let opts = Options::parse();
 
     // Route to appropriate handler based on subcommand
     match &opts.command {
@@ -507,50 +541,50 @@ impl Drop for CleanupGuard {
 
 /// Play the launch according to the launch record.
 async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
-    info!("=== Starting play() function ===");
+    debug!("=== Starting play() function ===");
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
     let _cleanup_guard = CleanupGuard;
-    info!("CleanupGuard installed");
+    debug!("CleanupGuard installed");
 
     // Load runtime configuration
-    info!("Loading runtime configuration...");
+    debug!("Loading runtime configuration...");
     let runtime_config = load_runtime_config(
         common.config.as_deref(),
         common.enable_monitoring,
         common.monitor_interval_ms,
     )?;
-    info!("Runtime configuration loaded successfully");
+    debug!("Runtime configuration loaded successfully");
 
-    info!("Loading launch dump from: {}", input_file.display());
+    debug!("Loading launch dump from: {}", input_file.display());
     let launch_dump = load_launch_dump(input_file)?;
-    info!("Launch dump loaded successfully");
+    debug!("Launch dump loaded successfully");
 
     // Prepare directories
-    info!("Creating log directories...");
+    debug!("Creating log directories...");
     let log_dir = create_log_dir(&common.log_dir)?;
-    info!("Log directory created: {}", log_dir.display());
+    debug!("Log directory created: {}", log_dir.display());
 
     let params_files_dir = log_dir.join("params_files");
     fs::create_dir(&params_files_dir)?;
-    info!("Created params_files directory");
+    debug!("Created params_files directory");
 
     let node_log_dir = log_dir.join("node");
     fs::create_dir(&node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", node_log_dir.display()))?;
-    info!("Created node log directory");
+    debug!("Created node log directory");
 
     let load_node_log_dir = log_dir.join("load_node");
     fs::create_dir(&load_node_log_dir)
         .wrap_err_with(|| format!("unable to create directory {}", load_node_log_dir.display()))?;
-    info!("Created load_node log directory");
+    debug!("Created load_node log directory");
 
     // Initialize NVML for GPU monitoring
-    info!("Initializing NVML...");
+    debug!("Initializing NVML...");
     let nvml = match nvml_wrapper::Nvml::init() {
         Ok(nvml) => {
             let device_count = nvml.device_count().unwrap_or(0);
-            info!(
+            debug!(
                 "NVML initialized successfully with {} GPU device(s)",
                 device_count
             );
@@ -564,7 +598,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     };
 
     // Initialize monitoring if enabled
-    info!("Initializing monitoring and process registry...");
+    debug!("Initializing monitoring and process registry...");
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
     let _monitor_thread = if runtime_config.monitoring.enabled {
         let monitor_config = MonitorConfig {
@@ -588,10 +622,10 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         debug!("Resource monitoring disabled");
         None
     };
-    info!("Monitoring initialization complete");
+    debug!("Monitoring initialization complete");
 
     // Build a table of composable node containers
-    info!("Building container names table...");
+    debug!("Building container names table...");
     let container_names: HashSet<String> = launch_dump
         .container
         .par_iter()
@@ -605,13 +639,13 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
             }
         })
         .collect();
-    info!(
+    debug!(
         "Container names table built with {} containers",
         container_names.len()
     );
 
     // Prepare node execution contexts
-    info!("Preparing node execution contexts...");
+    debug!("Preparing node execution contexts...");
     let NodeContextClasses {
         container_contexts,
         non_container_node_contexts: pure_node_contexts,
@@ -623,16 +657,13 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     );
 
     // Prepare LoadNode request execution contexts
-    info!("Preparing composable node contexts...");
+    debug!("Preparing composable node contexts...");
     let ComposableNodeContextSet { load_node_contexts } =
         prepare_composable_node_contexts(&launch_dump, &load_node_log_dir)?;
     info!(
         "Composable node contexts prepared: {} load_node contexts",
         load_node_contexts.len()
     );
-
-    // Report the number of entities
-    info!("nodes: {}", pure_node_contexts.len());
 
     // Spawn non-container nodes
     info!("Spawning non-container nodes...");
@@ -641,10 +672,10 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         .map(|future| future.boxed());
 
     // Initialize component loader for service-based loading
-    info!("Initializing component loader for service-based node loading");
+    debug!("Initializing component loader for service-based node loading");
     let component_loader = match crate::component_loader::start_component_loader_thread() {
         Ok(loader) => {
-            info!("Component loader initialized successfully");
+            debug!("Component loader initialized successfully");
             Some(loader)
         }
         Err(e) => {
@@ -654,7 +685,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         }
     };
 
-    info!("Proceeding with execution...");
+    debug!("Proceeding with execution...");
 
     // Create composable node execution configuration using runtime config values
     let composable_node_config = ComposableNodeExecutionConfig {
@@ -732,7 +763,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     let mut wait_futures: Vec<_> =
         chain!(non_container_node_tasks, wait_composable_node_tasks).collect();
 
-    info!("Collected {} futures to wait on", wait_futures.len());
+    debug!("Collected {} futures to wait on", wait_futures.len());
     if wait_futures.is_empty() {
         warn!("No futures to wait on - this will cause immediate exit!");
     }

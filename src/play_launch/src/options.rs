@@ -131,6 +131,12 @@ pub struct CommonOptions {
     #[arg(long, value_name = "MS")]
     pub monitor_interval_ms: Option<u64>,
 
+    /// Enable verbose output (INFO level logging).
+    /// Without this flag, only warnings and errors are shown.
+    /// Use RUST_LOG env var for debug-level logging.
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+
     /// Run composable nodes in standalone mode instead of loading into containers
     #[arg(long)]
     pub standalone_composable_nodes: bool,

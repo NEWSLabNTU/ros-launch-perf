@@ -800,10 +800,12 @@ async fn run_load_composable_node_via_service(
         return Ok(false);
     }
 
-    info!(
-        "{log_name}: Successfully loaded (unique_id: {})",
-        response.unique_id
-    );
+    if crate::is_verbose() {
+        info!(
+            "{log_name}: Successfully loaded (unique_id: {})",
+            response.unique_id
+        );
+    }
 
     // Write success status
     save_composable_node_service_status(true, output_dir, log_name)
@@ -845,7 +847,9 @@ fn save_node_status(status: &ExitStatus, output_dir: &Path, log_name: &str) -> e
 
     // Print status to the terminal
     if status.success() {
-        info!("[{log_name}] finishes")
+        if crate::is_verbose() {
+            info!("[{log_name}] finishes");
+        }
     } else {
         match status.code() {
             Some(code) => {
@@ -880,7 +884,9 @@ fn save_composable_node_service_status(
     writeln!(status_file, "{code}")?;
 
     if success {
-        debug!("{log_name} loading finishes successfully via service");
+        if crate::is_verbose() {
+            info!("{log_name} loading finishes successfully via service");
+        }
     } else {
         error!("{log_name} fails via service");
         error!("Check {}", output_dir.display());

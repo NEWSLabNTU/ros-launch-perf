@@ -225,17 +225,17 @@ impl ComposableNodeRecord {
 
 /// Read an deserialize the launch record dump.
 pub fn load_launch_dump(dump_file: &Path) -> eyre::Result<LaunchDump> {
-    use tracing::info;
+    use tracing::debug;
 
-    info!("Opening file: {}", dump_file.display());
+    debug!("Opening file: {}", dump_file.display());
     let file = File::open(dump_file)?;
-    info!("File opened successfully, creating buffered reader...");
+    debug!("File opened successfully, creating buffered reader...");
 
     let reader = BufReader::new(file);
-    info!("Buffered reader created, starting JSON deserialization...");
+    debug!("Buffered reader created, starting JSON deserialization...");
 
     let launch_dump: LaunchDump = serde_json::from_reader(reader)?;
-    info!("JSON deserialization complete!");
+    debug!("JSON deserialization complete!");
 
     Ok(launch_dump)
 }

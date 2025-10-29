@@ -131,14 +131,14 @@ fn run_ros_discovery_loop(
 ) -> eyre::Result<()> {
     use rclrs::CreateBasicExecutor;
 
-    info!("Starting ROS container discovery thread");
+    debug!("Starting ROS container discovery thread");
 
     // Initialize ROS context and node
     let context = rclrs::Context::new(std::env::args(), rclrs::InitOptions::default())?;
     let executor = context.create_basic_executor();
     let node = executor.create_node("play_launch_container_discovery")?;
 
-    info!("ROS container discovery node initialized");
+    debug!("ROS container discovery node initialized");
 
     // Process requests
     while let Some(request) = request_rx.blocking_recv() {
@@ -181,10 +181,12 @@ fn run_ros_discovery_loop(
                     .any(|name| name.ends_with("/_container/load_node"));
 
                 if has_list_nodes && has_load_node {
-                    info!(
-                        "Container '{}' is ready (has list_nodes and load_node services)",
-                        container_name
-                    );
+                    if crate::is_verbose() {
+                        info!(
+                            "Container '{}' is ready (has list_nodes and load_node services)",
+                            container_name
+                        );
+                    }
                     true
                 } else {
                     debug!(
@@ -207,7 +209,7 @@ fn run_ros_discovery_loop(
         let _ = response_tx.send(is_ready);
     }
 
-    info!("ROS container discovery thread shutting down");
+    debug!("ROS container discovery thread shutting down");
     Ok(())
 }
 
@@ -289,7 +291,9 @@ async fn wait_for_single_container(
             .await
         {
             Ok(true) => {
-                info!("Container '{}' is ready", container_name);
+                if crate::is_verbose() {
+                    info!("Container '{}' is ready", container_name);
+                }
                 return Ok(());
             }
             Ok(false) => {

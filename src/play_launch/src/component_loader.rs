@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 /// Response from loading a composable node
 #[derive(Clone, Debug, PartialEq)]
@@ -113,7 +113,7 @@ pub fn start_component_loader_thread() -> Result<ComponentLoaderHandle> {
         })
         .context("Failed to spawn component loader thread")?;
 
-    info!("Started component loader background thread");
+    debug!("Started component loader background thread");
 
     Ok(ComponentLoaderHandle { request_tx })
 }
@@ -133,7 +133,7 @@ fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest
         .create_node("play_launch_component_loader")
         .context("Failed to create component loader node")?;
 
-    info!("Component loader node created");
+    debug!("Component loader node created");
 
     // Cache service clients for each container
     let clients: Arc<Mutex<HashMap<String, rclrs::Client<composition_interfaces::srv::LoadNode>>>> =
@@ -188,7 +188,7 @@ fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest
         let _ = request.response_tx.send(result);
     }
 
-    info!("Component loader shutting down");
+    debug!("Component loader shutting down");
     Ok(())
 }
 
