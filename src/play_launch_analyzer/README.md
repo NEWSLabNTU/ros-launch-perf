@@ -4,7 +4,7 @@ Analysis and visualization tools for play_launch execution logs.
 
 ## Overview
 
-This package provides tools to analyze and visualize resource usage metrics collected by `play_launch` during ROS 2 launch execution.
+This package provides tools to analyze and visualize resource usage metrics collected by `play_launch` during ROS 2 launch execution. It generates individual interactive HTML charts using Plotly for comprehensive performance analysis.
 
 ## Installation
 
@@ -59,37 +59,49 @@ plot_play_launch --log-dir ./play_log/latest --metrics cpu memory io --output-di
 
 ### Generated Outputs
 
-The tool generates comprehensive plots in `<log_dir>/plots/`:
+The tool generates individual interactive charts and statistics in `<log_dir>/plot/`:
 
-**CPU and Memory:**
-- `cpu_usage.png` - CPU usage timeline
-- `memory_usage.png` - Memory usage timeline
-- `cpu_distribution.png` - CPU distribution box plot
-- `memory_distribution.png` - Memory distribution box plot
+**Interactive Charts** (separate HTML files, ~4-5 MB each):
+- `cpu_timeline.html` - CPU usage over time
+  - Containers show list of contained composable nodes on hover
+- `memory_timeline.html` - Memory usage over time
+  - Containers show list of contained composable nodes on hover
+- `cpu_distribution.html` - CPU distribution box plot **sorted low to high by average**
+  - Abbreviated labels (full names on hover)
+- `memory_distribution.html` - Memory distribution box plot **sorted low to high by average**
+  - Abbreviated labels (full names on hover)
+- `io_timeline.html` - I/O read/write rates over time (when available)
+- `network_timeline.html` - TCP/UDP connections over time (when available)
+- `gpu_timeline.html` - GPU memory usage over time (when available)
+- `gpu_temp_power.html` - GPU temperature over time (when available)
+- `gpu_clocks.html` - GPU clock frequencies over time (when available)
 
-**I/O (when available):**
-- `io_read_usage.png` - I/O read rate timeline
-- `io_write_usage.png` - I/O write rate timeline
-- `io_distribution.png` - I/O rate distribution
+**Interactive Features**:
+- **Full-screen viewing**: Each chart in its own file for maximum size
+- **Container-aware tooltips**: Timeline charts show which nodes run in each container
+- **Abbreviated labels**: Distribution plots use short labels to save space
+- **No legend clutter**: Process names appear in hover tooltips instead
+- **Zoom and pan**: Drag to zoom into specific time ranges, double-click to reset
+- **Hover tooltips**: Detailed values with full process names at each data point
+- **Download**: Use toolbar to export charts as PNG images
 
-**GPU (when available):**
-- `gpu_memory_usage.png` - GPU memory usage timeline
-- `gpu_utilization.png` - GPU compute utilization timeline
-- `gpu_temperature.png` - GPU temperature timeline
-- `gpu_power.png` - GPU power consumption timeline
-- `gpu_clocks.png` - GPU graphics and memory clocks timeline
-- `gpu_distribution.png` - GPU metrics distribution
+**Statistics Report** (`statistics.txt`):
+- Top 10 rankings for all metrics (CPU, memory, I/O, GPU, network)
+- Max and average values across execution
+- Comprehensive resource usage summary
 
-**Summary:**
-- `legend.png` - Node index legend mapping
-- `statistics.txt` - Comprehensive statistics report
-- `containers.txt` - Container listing
+**Metrics Included** (when data available):
+- **CPU**: Usage percentage, user time
+- **Memory**: RSS (resident set size), VMS (virtual memory size)
+- **I/O**: Read/write rates (disk and total including network)
+- **Network**: TCP/UDP connection counts
+- **GPU** (NVIDIA only): Memory usage, compute utilization, temperature, power, clock speeds
 
 ## Requirements
 
 - Python 3.8+
-- matplotlib
-- numpy
+- plotly >= 5.0.0
+- pandas >= 1.0.0
 
 ## License
 

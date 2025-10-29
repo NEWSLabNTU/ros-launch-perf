@@ -12,8 +12,8 @@ setup(
     ],
     install_requires=[
         "setuptools",
-        "matplotlib>=3.0.0",
-        "numpy>=1.16.0",
+        "plotly>=5.0.0",
+        "pandas>=1.0.0",
     ],
     zip_safe=True,
     maintainer="Jerry Lin",

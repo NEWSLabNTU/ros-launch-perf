@@ -1,29 +1,33 @@
 #!/usr/bin/env python3
 """
-Enhanced resource usage plotting tool for play_launch logs.
+Interactive resource usage charts for play_launch logs.
 
-Generates comprehensive visualizations including:
-- CPU and memory usage (timeline and distribution)
+Generates individual HTML files with interactive visualizations including:
+- CPU and memory usage (timeline and distribution sorted by average)
 - GPU usage and distribution (when available)
-- I/O rates (read/write timeline and distribution)
+- I/O rates (read/write timeline)
 - Network statistics
 - Comprehensive statistics report
+
+Each chart is in a separate file for full-screen viewing without legend clutter.
+Process names are shown in hover tooltips.
 """
 
 import argparse
 import csv
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import sys
 
 try:
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    import numpy as np
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import pandas as pd
 except ImportError:
     print(
-        "Error: matplotlib and numpy are required. Install with: pip install matplotlib numpy"
+        "Error: plotly and pandas are required. Install with: pip install plotly pandas"
     )
     sys.exit(1)
 
@@ -102,682 +106,982 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
             io_write_rates.append(float(write_rate_str) if write_rate_str else None)
 
             # Parse network connection fields
-            tcp_str = row.get("tcp_connections", "0").strip()
-            tcp_conns.append(int(tcp_str) if tcp_str else 0)
+            tcp_str = row.get("tcp_connections", "").strip()
+            tcp_conns.append(int(tcp_str) if tcp_str else None)
 
-            udp_str = row.get("udp_connections", "0").strip()
-            udp_conns.append(int(udp_str) if udp_str else 0)
+            udp_str = row.get("udp_connections", "").strip()
+            udp_conns.append(int(udp_str) if udp_str else None)
 
     if not timestamps:
         return None
 
-    # Convert to relative time and appropriate units
+    # Convert timestamps to relative seconds from start
     start_time = timestamps[0]
-    relative_times = [(ts - start_time).total_seconds() for ts in timestamps]
-    rss_mb = [rss / (1024 * 1024) for rss in rss_bytes]
-    gpu_mem_mb = [
-        (gm / (1024 * 1024)) if gm is not None else None for gm in gpu_mem_bytes
-    ]
-    gpu_power_watts = [
-        (power / 1000.0) if power is not None else None for power in gpu_powers
-    ]
-    io_read_mb_s = [
-        (rate / (1024 * 1024)) if rate is not None else None for rate in io_read_rates
-    ]
-    io_write_mb_s = [
-        (rate / (1024 * 1024)) if rate is not None else None for rate in io_write_rates
-    ]
+    times = [(ts - start_time).total_seconds() for ts in timestamps]
 
     return {
-        "times": relative_times,
+        "timestamps": timestamps,
+        "times": times,
         "cpu": cpu_percents,
-        "mem": rss_mb,
-        "gpu_mem": gpu_mem_mb,
+        "rss_mb": [rss / (1024**2) for rss in rss_bytes],
+        "gpu_mem_mb": [gm / (1024**2) if gm is not None else None for gm in gpu_mem_bytes],
         "gpu_util": gpu_util_percents,
         "gpu_mem_util": gpu_mem_util_percents,
         "gpu_temp": gpu_temps,
-        "gpu_power": gpu_power_watts,
+        "gpu_power_w": [gp / 1000 if gp is not None else None for gp in gpu_powers],
         "gpu_graphics_clock": gpu_graphics_clocks,
         "gpu_memory_clock": gpu_memory_clocks,
-        "io_read_rate": io_read_mb_s,
-        "io_write_rate": io_write_mb_s,
-        "tcp_conns": tcp_conns,
-        "udp_conns": udp_conns,
+        "io_read_mbps": [r / (1024**2) if r is not None else None for r in io_read_rates],
+        "io_write_mbps": [w / (1024**2) if w is not None else None for w in io_write_rates],
+        "tcp": tcp_conns,
+        "udp": udp_conns,
     }
 
 
-def load_all_metrics(log_dir: Path) -> Dict[str, Dict]:
-    """Load all metrics.csv files from node and load_node directories."""
+def collect_metrics(log_dir: Path) -> Dict[str, Dict]:
+    """
+    Collect metrics from all node CSV files in the log directory.
+
+    Returns:
+        Dictionary mapping node names to their metrics
+    """
     metrics = {}
 
-    # Find all metrics.csv files in node/ and load_node/ subdirectories
-    csv_files = []
+    # Scan node/ and load_node/ directories
     for subdir in ["node", "load_node"]:
         subdir_path = log_dir / subdir
-        if subdir_path.exists():
-            csv_files.extend(subdir_path.glob("*/metrics.csv"))
+        if not subdir_path.exists():
+            continue
 
-    if not csv_files:
-        raise FileNotFoundError(f"No metrics.csv files found in {log_dir}/node or {log_dir}/load_node")
+        for node_dir in subdir_path.iterdir():
+            if not node_dir.is_dir():
+                continue
 
-    print(f"Loading {len(csv_files)} metrics.csv files...")
+            csv_file = node_dir / "metrics.csv"
+            if not csv_file.exists():
+                continue
 
-    for csv_path in csv_files:
-        # Use parent directory name as node name
-        node_name = csv_path.parent.name
+            node_data = parse_csv_file(csv_file)
+            if node_data is not None:
+                metrics[node_dir.name] = node_data
 
-        node_metrics = parse_csv_file(csv_path)
-        if node_metrics:
-            metrics[node_name] = node_metrics
-
-    print(f"Loaded metrics for {len(metrics)} nodes")
     return metrics
 
 
-def has_gpu_data(metrics: Dict[str, Dict]) -> bool:
-    """Check if any node has GPU data (any GPU metric)."""
+def has_data(metrics: Dict[str, Dict], metric_key: str) -> bool:
+    """Check if any node has non-None data for the given metric."""
     for node_data in metrics.values():
-        # Check all GPU metric fields
-        if (any(g is not None for g in node_data["gpu_mem"]) or
-            any(g is not None for g in node_data["gpu_util"]) or
-            any(g is not None for g in node_data["gpu_mem_util"]) or
-            any(g is not None for g in node_data["gpu_temp"]) or
-            any(g is not None for g in node_data["gpu_power"]) or
-            any(g is not None for g in node_data["gpu_graphics_clock"]) or
-            any(g is not None for g in node_data["gpu_memory_clock"])):
+        if any(v is not None for v in node_data.get(metric_key, [])):
             return True
     return False
 
 
-def has_io_data(metrics: Dict[str, Dict]) -> bool:
-    """Check if any node has I/O rate data."""
-    for node_data in metrics.values():
-        if any(r is not None for r in node_data["io_read_rate"]):
-            return True
-    return False
-
-
-def plot_timeline(
-    metrics: Dict[str, Dict],
-    metric_key: str,
-    ylabel: str,
-    title: str,
-    output_path: Path,
-    node_colors: Dict = None,
-) -> Dict:
-    """Generic timeline plotting function."""
-    fig, ax = plt.subplots(figsize=(14, 8))
-
-    if node_colors is None:
-        node_colors = {}
-
-    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
-        values = node_data[metric_key]
-        times = node_data["times"]
-
-        # Filter out None values for plotting (all GPU and I/O metrics can have None)
-        if metric_key in ["gpu_mem", "gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power",
-                          "gpu_graphics_clock", "gpu_memory_clock", "io_read_rate", "io_write_rate"]:
-            plot_times = [t for t, v in zip(times, values) if v is not None]
-            plot_values = [v for v in values if v is not None]
-        else:
-            plot_times = times
-            plot_values = values
-
-        if not plot_values:
-            continue
-
-        if node_name in node_colors:
-            color = node_colors[node_name][1]
-        else:
-            color = None
-        ax.plot(plot_times, plot_values, label=f"[{idx}]", linewidth=0.8, color=color)
-
-        if node_name not in node_colors:
-            node_colors[node_name] = (idx, ax.get_lines()[-1].get_color())
-
-    ax.set_xlabel("Time (seconds)", fontsize=12)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-    print(f"{title} saved to: {output_path}")
-    return node_colors
-
-
-def plot_distribution(
-    metrics: Dict[str, Dict],
-    metric_key: str,
-    xlabel: str,
-    title: str,
-    output_path: Path,
-    node_colors: Dict,
-):
-    """Generic distribution box plot function."""
-    fig, ax = plt.subplots(figsize=(14, 8))
-
-    data_to_plot = []
-    positions = []
-    colors_to_use = []
-
-    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
-        values = node_data[metric_key]
-
-        # Filter None values (all GPU and I/O metrics can have None)
-        if metric_key in ["gpu_mem", "gpu_util", "gpu_mem_util", "gpu_temp", "gpu_power",
-                          "gpu_graphics_clock", "gpu_memory_clock", "io_read_rate", "io_write_rate"]:
-            plot_values = [v for v in values if v is not None]
-        else:
-            plot_values = values
-
-        if plot_values:
-            data_to_plot.append(plot_values)
-            positions.append(idx)
-            colors_to_use.append(node_colors[node_name][1])
-
-    if not data_to_plot:
-        print(f"Warning: No data for {metric_key} distribution plot")
-        return
-
-    bp = ax.boxplot(
-        data_to_plot,
-        positions=positions,
-        widths=0.6,
-        patch_artist=True,
-        showfliers=False,
-    )
-
-    for patch, color in zip(bp["boxes"], colors_to_use):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.6)
-
-    ax.set_xlabel("Node Index", fontsize=12)
-    ax.set_ylabel(xlabel, fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight="bold")
-    ax.grid(True, alpha=0.3, axis="y")
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-    print(f"{title} saved to: {output_path}")
-
-
-def plot_gpu_clocks(
-    metrics: Dict[str, Dict],
-    output_path: Path,
-    node_colors: Dict,
-):
-    """Plot GPU graphics and memory clocks on the same chart."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 12))
-
-    # Plot graphics clocks
-    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
-        graphics_clocks = node_data["gpu_graphics_clock"]
-        times = node_data["times"]
-
-        # Filter out None values
-        plot_times = [t for t, v in zip(times, graphics_clocks) if v is not None]
-        plot_values = [v for v in graphics_clocks if v is not None]
-
-        if not plot_values:
-            continue
-
-        color = node_colors.get(node_name, (idx, None))[1]
-        ax1.plot(plot_times, plot_values, label=f"[{idx}]", linewidth=0.8, color=color)
-
-    ax1.set_xlabel("Time (seconds)", fontsize=12)
-    ax1.set_ylabel("Graphics Clock (MHz)", fontsize=12)
-    ax1.set_title("GPU Graphics Clock Over Time", fontsize=14, fontweight="bold")
-    ax1.grid(True, alpha=0.3)
-
-    # Plot memory clocks
-    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
-        memory_clocks = node_data["gpu_memory_clock"]
-        times = node_data["times"]
-
-        # Filter out None values
-        plot_times = [t for t, v in zip(times, memory_clocks) if v is not None]
-        plot_values = [v for v in memory_clocks if v is not None]
-
-        if not plot_values:
-            continue
-
-        color = node_colors.get(node_name, (idx, None))[1]
-        ax2.plot(plot_times, plot_values, label=f"[{idx}]", linewidth=0.8, color=color)
-
-    ax2.set_xlabel("Time (seconds)", fontsize=12)
-    ax2.set_ylabel("Memory Clock (MHz)", fontsize=12)
-    ax2.set_title("GPU Memory Clock Over Time", fontsize=14, fontweight="bold")
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-    print(f"GPU Clocks saved to: {output_path}")
-
-
-def create_legend_image(node_colors: Dict, output_path: Path):
-    """Create a legend image mapping indices to node names."""
-    items_per_column = 30
-    num_nodes = len(node_colors)
-    num_columns = (num_nodes + items_per_column - 1) // items_per_column
-
-    fig_width = max(12, num_columns * 6)
-    fig_height = max(8, min(items_per_column, num_nodes) * 0.3 + 1)
-
-    fig, axes = plt.subplots(1, num_columns, figsize=(fig_width, fig_height))
-    if num_columns == 1:
-        axes = [axes]
-
-    for ax in axes:
-        ax.axis("off")
-
-    sorted_nodes = sorted(node_colors.items(), key=lambda x: x[1][0])
-
-    for col_idx in range(num_columns):
-        start_idx = col_idx * items_per_column
-        end_idx = min(start_idx + items_per_column, num_nodes)
-        col_nodes = sorted_nodes[start_idx:end_idx]
-
-        if not col_nodes:
-            continue
-
-        y_position = 0.95
-        y_step = 0.9 / len(col_nodes)
-
-        for node_name, (idx, color) in col_nodes:
-            axes[col_idx].plot(
-                [0.02, 0.08],
-                [y_position, y_position],
-                color=color,
-                linewidth=3,
-                solid_capstyle="round",
-            )
-            axes[col_idx].text(
-                0.12,
-                y_position,
-                f"[{idx}] {node_name}",
-                fontsize=8,
-                verticalalignment="center",
-                fontfamily="monospace",
-            )
-            y_position -= y_step
-
-    plt.suptitle("Node Index Legend", fontsize=14, fontweight="bold", y=0.98)
-    plt.tight_layout(rect=[0, 0, 1, 0.97])
-    plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    plt.close()
-
-    print(f"Legend saved to: {output_path}")
-
-
-def calculate_statistics(metrics: Dict[str, Dict], node_colors: Dict) -> str:
-    """Calculate comprehensive statistics."""
-    stats = []
-
-    for idx, (node_name, node_data) in enumerate(sorted(metrics.items())):
-        cpu_vals = node_data["cpu"]
-        mem_vals = node_data["mem"]
-
-        if not cpu_vals or not mem_vals:
-            continue
-
-        # Basic stats
-        max_cpu = max(cpu_vals)
-        avg_cpu = sum(cpu_vals) / len(cpu_vals)
-        max_mem = max(mem_vals)
-        avg_mem = sum(mem_vals) / len(mem_vals)
-
-        # I/O stats
-        io_read_vals = [r for r in node_data["io_read_rate"] if r is not None]
-        io_write_vals = [w for w in node_data["io_write_rate"] if w is not None]
-        avg_io_read = sum(io_read_vals) / len(io_read_vals) if io_read_vals else 0
-        avg_io_write = sum(io_write_vals) / len(io_write_vals) if io_write_vals else 0
-
-        # Network stats
-        tcp_vals = node_data["tcp_conns"]
-        udp_vals = node_data["udp_conns"]
-        avg_tcp = sum(tcp_vals) / len(tcp_vals) if tcp_vals else 0
-        avg_udp = sum(udp_vals) / len(udp_vals) if udp_vals else 0
-        max_tcp = max(tcp_vals) if tcp_vals else 0
-        max_udp = max(udp_vals) if udp_vals else 0
-
-        # GPU stats
-        gpu_mem_vals = [g for g in node_data["gpu_mem"] if g is not None]
-        gpu_util_vals = [g for g in node_data["gpu_util"] if g is not None]
-        gpu_mem_util_vals = [g for g in node_data["gpu_mem_util"] if g is not None]
-        gpu_temp_vals = [g for g in node_data["gpu_temp"] if g is not None]
-        gpu_power_vals = [g for g in node_data["gpu_power"] if g is not None]
-        gpu_graphics_clock_vals = [g for g in node_data["gpu_graphics_clock"] if g is not None]
-        gpu_memory_clock_vals = [g for g in node_data["gpu_memory_clock"] if g is not None]
-
-        max_gpu_mem = max(gpu_mem_vals) if gpu_mem_vals else 0
-        avg_gpu_mem = sum(gpu_mem_vals) / len(gpu_mem_vals) if gpu_mem_vals else 0
-        max_gpu_util = max(gpu_util_vals) if gpu_util_vals else 0
-        avg_gpu_util = sum(gpu_util_vals) / len(gpu_util_vals) if gpu_util_vals else 0
-        max_gpu_mem_util = max(gpu_mem_util_vals) if gpu_mem_util_vals else 0
-        avg_gpu_mem_util = sum(gpu_mem_util_vals) / len(gpu_mem_util_vals) if gpu_mem_util_vals else 0
-        max_gpu_temp = max(gpu_temp_vals) if gpu_temp_vals else 0
-        avg_gpu_temp = sum(gpu_temp_vals) / len(gpu_temp_vals) if gpu_temp_vals else 0
-        max_gpu_power = max(gpu_power_vals) if gpu_power_vals else 0
-        avg_gpu_power = sum(gpu_power_vals) / len(gpu_power_vals) if gpu_power_vals else 0
-        avg_gpu_graphics_clock = sum(gpu_graphics_clock_vals) / len(gpu_graphics_clock_vals) if gpu_graphics_clock_vals else 0
-        avg_gpu_memory_clock = sum(gpu_memory_clock_vals) / len(gpu_memory_clock_vals) if gpu_memory_clock_vals else 0
-
-        stats.append(
-            {
-                "index": idx,
-                "name": node_name,
-                "max_cpu": max_cpu,
-                "avg_cpu": avg_cpu,
-                "max_mem": max_mem,
-                "avg_mem": avg_mem,
-                "avg_io_read": avg_io_read,
-                "avg_io_write": avg_io_write,
-                "avg_tcp": avg_tcp,
-                "avg_udp": avg_udp,
-                "max_tcp": max_tcp,
-                "max_udp": max_udp,
-                "max_gpu_mem": max_gpu_mem,
-                "avg_gpu_mem": avg_gpu_mem,
-                "max_gpu_util": max_gpu_util,
-                "avg_gpu_util": avg_gpu_util,
-                "max_gpu_mem_util": max_gpu_mem_util,
-                "avg_gpu_mem_util": avg_gpu_mem_util,
-                "max_gpu_temp": max_gpu_temp,
-                "avg_gpu_temp": avg_gpu_temp,
-                "max_gpu_power": max_gpu_power,
-                "avg_gpu_power": avg_gpu_power,
-                "avg_gpu_graphics_clock": avg_gpu_graphics_clock,
-                "avg_gpu_memory_clock": avg_gpu_memory_clock,
-            }
-        )
-
-    # Build report
-    report = []
-    report.append("=" * 80)
-    report.append("RESOURCE USAGE STATISTICS")
-    report.append("=" * 80)
-    report.append("")
-
-    # CPU stats
-    report.append("Top 10 Nodes by Maximum CPU Usage")
-    report.append("-" * 80)
-    report.append(f"{'Rank':<6} {'Index':<8} {'Max CPU %':<12} {'Node Name'}")
-    report.append("-" * 80)
-    for rank, s in enumerate(
-        sorted(stats, key=lambda x: x["max_cpu"], reverse=True)[:10], 1
-    ):
-        report.append(
-            f"{rank:<6} [{s['index']}]{'':<6} {s['max_cpu']:>10.2f}%  {s['name']}"
-        )
-    report.append("")
-
-    report.append("Top 10 Nodes by Average CPU Usage")
-    report.append("-" * 80)
-    report.append(f"{'Rank':<6} {'Index':<8} {'Avg CPU %':<12} {'Node Name'}")
-    report.append("-" * 80)
-    for rank, s in enumerate(
-        sorted(stats, key=lambda x: x["avg_cpu"], reverse=True)[:10], 1
-    ):
-        report.append(
-            f"{rank:<6} [{s['index']}]{'':<6} {s['avg_cpu']:>10.2f}%  {s['name']}"
-        )
-    report.append("")
-
-    # Memory stats
-    report.append("Top 10 Nodes by Maximum Memory Usage")
-    report.append("-" * 80)
-    report.append(f"{'Rank':<6} {'Index':<8} {'Max Mem (MB)':<14} {'Node Name'}")
-    report.append("-" * 80)
-    for rank, s in enumerate(
-        sorted(stats, key=lambda x: x["max_mem"], reverse=True)[:10], 1
-    ):
-        report.append(
-            f"{rank:<6} [{s['index']}]{'':<6} {s['max_mem']:>12.2f}  {s['name']}"
-        )
-    report.append("")
-
-    report.append("Top 10 Nodes by Average Memory Usage")
-    report.append("-" * 80)
-    report.append(f"{'Rank':<6} {'Index':<8} {'Avg Mem (MB)':<14} {'Node Name'}")
-    report.append("-" * 80)
-    for rank, s in enumerate(
-        sorted(stats, key=lambda x: x["avg_mem"], reverse=True)[:10], 1
-    ):
-        report.append(
-            f"{rank:<6} [{s['index']}]{'':<6} {s['avg_mem']:>12.2f}  {s['name']}"
-        )
-    report.append("")
-
-    # I/O stats (if available)
-    if any(s["avg_io_read"] > 0 or s["avg_io_write"] > 0 for s in stats):
-        report.append("Top 10 Nodes by Average I/O Read Rate")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Avg Read (MB/s)':<18} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_io_read"], reverse=True)[:10], 1
-        ):
-            if s["avg_io_read"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_io_read']:>16.4f}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Average I/O Write Rate")
-        report.append("-" * 80)
-        report.append(
-            f"{'Rank':<6} {'Index':<8} {'Avg Write (MB/s)':<18} {'Node Name'}"
-        )
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_io_write"], reverse=True)[:10], 1
-        ):
-            if s["avg_io_write"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_io_write']:>16.4f}  {s['name']}"
-                )
-        report.append("")
-
-    # Network stats
-    if any(s["avg_tcp"] > 0 or s["avg_udp"] > 0 for s in stats):
-        report.append("Top 10 Nodes by Average TCP Connections")
-        report.append("-" * 80)
-        report.append(
-            f"{'Rank':<6} {'Index':<8} {'Avg TCP':<12} {'Max TCP':<12} {'Node Name'}"
-        )
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_tcp"], reverse=True)[:10], 1
-        ):
-            if s["avg_tcp"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_tcp']:>10.1f}  {s['max_tcp']:>10}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Average UDP Connections")
-        report.append("-" * 80)
-        report.append(
-            f"{'Rank':<6} {'Index':<8} {'Avg UDP':<12} {'Max UDP':<12} {'Node Name'}"
-        )
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_udp"], reverse=True)[:10], 1
-        ):
-            if s["avg_udp"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_udp']:>10.1f}  {s['max_udp']:>10}  {s['name']}"
-                )
-        report.append("")
-
-    # GPU stats (if available)
-    if any(s["max_gpu_mem"] > 0 for s in stats):
-        report.append("Top 10 Nodes by Maximum GPU Memory Usage")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Max GPU (MB)':<14} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["max_gpu_mem"], reverse=True)[:10], 1
-        ):
-            if s["max_gpu_mem"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_mem']:>12.2f}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Average GPU Utilization")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Avg GPU %':<12} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_gpu_util"], reverse=True)[:10], 1
-        ):
-            if s["avg_gpu_util"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_gpu_util']:>10.2f}%  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Maximum GPU Memory Utilization")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Max Mem Util %':<16} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["max_gpu_mem_util"], reverse=True)[:10], 1
-        ):
-            if s["max_gpu_mem_util"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_mem_util']:>14.2f}%  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Maximum GPU Temperature")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Max Temp (°C)':<16} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["max_gpu_temp"], reverse=True)[:10], 1
-        ):
-            if s["max_gpu_temp"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_temp']:>14.1f}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Maximum GPU Power Consumption")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Max Power (W)':<16} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["max_gpu_power"], reverse=True)[:10], 1
-        ):
-            if s["max_gpu_power"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['max_gpu_power']:>14.2f}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Average GPU Graphics Clock")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Avg Clock (MHz)':<18} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_gpu_graphics_clock"], reverse=True)[:10], 1
-        ):
-            if s["avg_gpu_graphics_clock"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_gpu_graphics_clock']:>16.1f}  {s['name']}"
-                )
-        report.append("")
-
-        report.append("Top 10 Nodes by Average GPU Memory Clock")
-        report.append("-" * 80)
-        report.append(f"{'Rank':<6} {'Index':<8} {'Avg Clock (MHz)':<18} {'Node Name'}")
-        report.append("-" * 80)
-        for rank, s in enumerate(
-            sorted(stats, key=lambda x: x["avg_gpu_memory_clock"], reverse=True)[:10], 1
-        ):
-            if s["avg_gpu_memory_clock"] > 0:
-                report.append(
-                    f"{rank:<6} [{s['index']}]{'':<6} {s['avg_gpu_memory_clock']:>16.1f}  {s['name']}"
-                )
-        report.append("")
-
-    report.append("=" * 80)
-    return "\n".join(report)
-
-
-def generate_container_listing(log_dir: Path, node_colors: Dict) -> str:
-    """Generate container listing (simplified - full implementation in original)."""
-    # This is a placeholder - full implementation would parse load_node logs
-    return "Container listing (see original implementation for details)\n"
-
-
-def list_available_metrics(metrics: Dict[str, Dict]) -> Dict[str, bool]:
+def load_all_metadata(log_dir: Path) -> Dict[str, Dict]:
     """
-    Analyze metrics data and return which metric categories are available.
+    Load all metadata.json files from node/ and load_node/ directories.
 
     Returns:
-        Dict mapping metric category to availability (True/False)
+        Dictionary mapping node names to their metadata
     """
-    return {
-        "cpu": True,  # Always available
-        "memory": True,  # Always available
-        "io": has_io_data(metrics),
-        "gpu": has_gpu_data(metrics),
+    metadata = {}
+
+    # Load regular node and container metadata
+    node_dir = log_dir / "node"
+    if node_dir.exists():
+        for node_subdir in node_dir.iterdir():
+            if not node_subdir.is_dir():
+                continue
+
+            metadata_file = node_subdir / "metadata.json"
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    metadata[node_subdir.name] = json.load(f)
+
+    # Load composable node metadata
+    load_node_dir = log_dir / "load_node"
+    if load_node_dir.exists():
+        for node_subdir in load_node_dir.iterdir():
+            if not node_subdir.is_dir():
+                continue
+
+            metadata_file = node_subdir / "metadata.json"
+            if metadata_file.exists():
+                with open(metadata_file, 'r') as f:
+                    metadata[node_subdir.name] = json.load(f)
+
+    return metadata
+
+
+def build_container_mapping(metadata: Dict[str, Dict]) -> Dict[str, List[str]]:
+    """
+    Build a mapping from container names to lists of composable nodes they contain.
+
+    Args:
+        metadata: Dictionary of node metadata from load_all_metadata()
+
+    Returns:
+        Dictionary mapping container names to lists of contained composable node names
+    """
+    container_map = {}
+
+    # First, identify all containers and initialize their lists
+    for node_name, node_meta in metadata.items():
+        if node_meta.get("is_container", False):
+            container_map[node_name] = []
+
+    # Then, map composable nodes to their containers
+    for node_name, node_meta in metadata.items():
+        if node_meta.get("type") == "composable_node":
+            target_container = node_meta.get("target_container_node_name")
+            if target_container and target_container in container_map:
+                container_map[target_container].append(node_name)
+
+    return container_map
+
+
+def abbreviate_name(name: str, max_len: int = 15) -> str:
+    """
+    Abbreviate a node name if it's longer than max_len.
+
+    Args:
+        name: Full node name
+        max_len: Maximum length before abbreviation
+
+    Returns:
+        Abbreviated name with ellipsis if needed
+    """
+    if len(name) <= max_len:
+        return name
+    return name[:max_len-3] + "..."
+
+
+def inject_statistics_panel(html_path: Path, unit: str = "%", container_map: Dict[str, List[str]] = None):
+    """
+    Inject JavaScript into HTML file to add a statistics panel that shows box plot statistics.
+
+    The panel appears at the top-left when hovering over a box plot and shows:
+    - Node name
+    - Count, Min, Max, Q1, Median, Q3, Mean, StdDev
+    - List of contained nodes (if hovering over a container)
+
+    Args:
+        html_path: Path to the HTML file to modify
+        unit: Unit string to append to values (e.g., "%", " MB")
+        container_map: Dictionary mapping container names to lists of contained node names
+    """
+    # Read the HTML file
+    with open(html_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+
+    # Embed container map as JSON
+    container_map_json = json.dumps(container_map or {})
+
+    # JavaScript code to add statistics panel
+    js_code = f'''
+<script>
+window.addEventListener('load', function() {{
+    // Find the Plotly div (first div with class 'plotly-graph-div')
+    var plotlyDiv = document.querySelector('.plotly-graph-div');
+    if (!plotlyDiv) return;
+
+    // Container mapping (container name -> list of contained nodes)
+    var containerMap = {container_map_json};
+
+    // Create statistics panel
+    var statsPanel = document.createElement('div');
+    statsPanel.id = 'stats-panel';
+    statsPanel.style.cssText = `
+        position: fixed;
+        top: 80px;
+        left: 20px;
+        background-color: rgba(255, 255, 255, 0.95);
+        border: 2px solid #333;
+        border-radius: 8px;
+        padding: 15px;
+        display: none;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        z-index: 10000;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        min-width: 200px;
+    `;
+    document.body.appendChild(statsPanel);
+
+    // Helper functions for statistics calculations
+    function calculateMedian(arr) {{
+        var sorted = arr.slice().sort((a, b) => a - b);
+        var mid = Math.floor(sorted.length / 2);
+        return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }}
+
+    function calculateQ1(arr) {{
+        var sorted = arr.slice().sort((a, b) => a - b);
+        var mid = Math.floor(sorted.length / 2);
+        var lowerHalf = sorted.length % 2 ? sorted.slice(0, mid) : sorted.slice(0, mid);
+        return calculateMedian(lowerHalf);
+    }}
+
+    function calculateQ3(arr) {{
+        var sorted = arr.slice().sort((a, b) => a - b);
+        var mid = Math.floor(sorted.length / 2);
+        var upperHalf = sorted.length % 2 ? sorted.slice(mid + 1) : sorted.slice(mid);
+        return calculateMedian(upperHalf);
+    }}
+
+    function calculateMean(arr) {{
+        return arr.reduce((sum, val) => sum + val, 0) / arr.length;
+    }}
+
+    function calculateStdDev(arr) {{
+        var mean = calculateMean(arr);
+        var squareDiffs = arr.map(val => Math.pow(val - mean, 2));
+        var avgSquareDiff = calculateMean(squareDiffs);
+        return Math.sqrt(avgSquareDiff);
+    }}
+
+    // Listen to hover events
+    plotlyDiv.on('plotly_hover', function(data) {{
+        var pt = data.points[0];
+        var trace = pt.data;
+        var yValues = trace.y;
+
+        // Calculate statistics
+        var count = yValues.length;
+        var min = Math.min(...yValues);
+        var max = Math.max(...yValues);
+        var q1 = calculateQ1(yValues);
+        var median = calculateMedian(yValues);
+        var q3 = calculateQ3(yValues);
+        var mean = calculateMean(yValues);
+        var stddev = calculateStdDev(yValues);
+
+        // Build HTML for panel
+        var unit = "{unit}";
+        // customdata is an array, all elements are the same (node name)
+        var nodeName = trace.customdata ? trace.customdata[0] : trace.name;
+        var html = '<div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">' +
+                   nodeName + '</div>';
+        html += '<div style="border-top: 1px solid #ccc; padding-top: 8px;">';
+        html += 'Count: ' + count + '<br>';
+        html += 'Min: ' + min.toFixed(2) + unit + '<br>';
+        html += 'Q1: ' + q1.toFixed(2) + unit + '<br>';
+        html += 'Median: ' + median.toFixed(2) + unit + '<br>';
+        html += 'Q3: ' + q3.toFixed(2) + unit + '<br>';
+        html += 'Max: ' + max.toFixed(2) + unit + '<br>';
+        html += 'Mean: ' + mean.toFixed(2) + unit + '<br>';
+        html += 'StdDev: ' + stddev.toFixed(2) + unit;
+        html += '</div>';
+
+        // Add contained nodes if this is a container
+        var containedNodes = containerMap[nodeName];
+        if (containedNodes && containedNodes.length > 0) {{
+            html += '<div style="border-top: 1px solid #ccc; margin-top: 8px; padding-top: 8px;">';
+            html += '<b>Contains:</b><br>';
+            for (var i = 0; i < containedNodes.length; i++) {{
+                html += '  • ' + containedNodes[i] + '<br>';
+            }}
+            html += '</div>';
+        }}
+
+        statsPanel.innerHTML = html;
+        statsPanel.style.display = 'block';
+    }});
+
+    // Hide panel when not hovering
+    plotlyDiv.on('plotly_unhover', function() {{
+        statsPanel.style.display = 'none';
+    }});
+}});
+</script>
+'''
+
+    # Insert JavaScript before </body> tag
+    html_content = html_content.replace('</body>', js_code + '\n</body>')
+
+    # Write back to file
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+
+def inject_container_panel(html_path: Path, container_map: Dict[str, List[str]]):
+    """
+    Inject JavaScript into HTML file to add a container panel for timeline charts.
+
+    The panel appears at the top-left when hovering over a container's curve and shows:
+    - Container name
+    - List of contained composable nodes
+
+    Args:
+        html_path: Path to the HTML file to modify
+        container_map: Dictionary mapping container names to lists of contained node names
+    """
+    # Read the HTML file
+    with open(html_path, 'r', encoding='utf-8') as f:
+        html_content = f.read()
+
+    # Embed container map as JSON
+    container_map_json = json.dumps(container_map or {})
+
+    # JavaScript code to add container panel
+    js_code = f'''
+<script>
+window.addEventListener('load', function() {{
+    // Find the Plotly div (first div with class 'plotly-graph-div')
+    var plotlyDiv = document.querySelector('.plotly-graph-div');
+    if (!plotlyDiv) return;
+
+    // Container mapping (container name -> list of contained nodes)
+    var containerMap = {container_map_json};
+
+    // Create container panel
+    var containerPanel = document.createElement('div');
+    containerPanel.id = 'container-panel';
+    containerPanel.style.cssText = `
+        position: fixed;
+        top: 80px;
+        left: 20px;
+        background-color: rgba(255, 255, 255, 0.95);
+        border: 2px solid #333;
+        border-radius: 8px;
+        padding: 15px;
+        display: none;
+        font-family: 'Courier New', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        z-index: 10000;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        min-width: 200px;
+    `;
+    document.body.appendChild(containerPanel);
+
+    // Listen to hover events
+    plotlyDiv.on('plotly_hover', function(data) {{
+        var pt = data.points[0];
+        var trace = pt.data;
+        var traceName = trace.name;
+
+        // Check if this trace is a container
+        var containedNodes = containerMap[traceName];
+
+        if (containedNodes && containedNodes.length > 0) {{
+            var html = '<div style="font-weight: bold; margin-bottom: 8px; font-size: 14px;">';
+            html += 'Container: ' + traceName + '</div>';
+            html += '<div style="border-top: 1px solid #ccc; padding-top: 8px;">';
+            html += '<b>Contains:</b><br>';
+            for (var i = 0; i < containedNodes.length; i++) {{
+                html += '  • ' + containedNodes[i] + '<br>';
+            }}
+            html += '</div>';
+
+            containerPanel.innerHTML = html;
+            containerPanel.style.display = 'block';
+        }} else {{
+            containerPanel.style.display = 'none';
+        }}
+    }});
+
+    // Hide panel when not hovering
+    plotlyDiv.on('plotly_unhover', function() {{
+        containerPanel.style.display = 'none';
+    }});
+}});
+</script>
+'''
+
+    # Insert JavaScript before </body> tag
+    html_content = html_content.replace('</body>', js_code + '\n</body>')
+
+    # Write back to file
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+
+
+def create_individual_charts(
+    metrics: Dict[str, Dict],
+    output_dir: Path,
+    log_dir: Path,
+    metrics_to_plot: List[str] = None
+):
+    """
+    Create individual interactive HTML charts (one file per chart).
+
+    Args:
+        metrics: Dictionary of node metrics
+        output_dir: Base directory (will create plot/ subdirectory)
+        log_dir: Log directory to read metadata from
+        metrics_to_plot: List of metric groups to plot (cpu, memory, io, gpu, network, all)
+    """
+    if not metrics:
+        print("No metrics data available to plot")
+        return
+
+    # Default to all metrics
+    if metrics_to_plot is None or "all" in metrics_to_plot:
+        metrics_to_plot = ["cpu", "memory", "io", "gpu", "network"]
+
+    # Create plot/ subdirectory
+    output_dir = output_dir / "plot"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load metadata and build container mapping
+    print("Loading node metadata...")
+    metadata = load_all_metadata(log_dir)
+    container_map = build_container_mapping(metadata)
+
+    # Determine available metrics
+    has_cpu = has_data(metrics, "cpu")
+    has_memory = has_data(metrics, "rss_mb")
+    has_io = has_data(metrics, "io_read_mbps") or has_data(metrics, "io_write_mbps")
+    has_gpu_mem = has_data(metrics, "gpu_mem_mb")
+    has_gpu_util = has_data(metrics, "gpu_util")
+    has_gpu_temp = has_data(metrics, "gpu_temp")
+    has_gpu_power = has_data(metrics, "gpu_power_w")
+    has_gpu_clock = has_data(metrics, "gpu_graphics_clock")
+    has_network = has_data(metrics, "tcp") or has_data(metrics, "udp")
+
+    chart_config = {
+        'displayModeBar': True,
+        'displaylogo': False,
+        'modeBarButtonsToRemove': ['lasso2d', 'select2d'],
+        'toImageButtonOptions': {
+            'format': 'png',
+            'filename': 'chart',
+            'height': 1000,
+            'width': 1600,
+            'scale': 2
+        }
     }
+
+    charts_created = []
+
+    # Create CPU timeline chart
+    if "cpu" in metrics_to_plot and has_cpu:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+            cpu_values = node_data["cpu"]
+            plot_times = [t for t, v in zip(times, cpu_values) if v is not None]
+            plot_values = [v for v in cpu_values if v is not None]
+
+            if plot_values:
+                # Check if this node is a container
+                node_meta = metadata.get(node_name, {})
+                is_container = node_meta.get("is_container", False)
+
+                if is_container and node_name in container_map:
+                    # Container: show contained nodes in hover
+                    contained_nodes = container_map[node_name]
+                    if contained_nodes:
+                        nodes_list = "<br>Contains: " + ", ".join(contained_nodes[:5])
+                        if len(contained_nodes) > 5:
+                            nodes_list += f", ... ({len(contained_nodes)-5} more)"
+                    else:
+                        nodes_list = "<br>Contains: (empty)"
+
+                    hovertemplate = f'<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>CPU: %{{y:.2f}}%{nodes_list}<extra></extra>'
+                else:
+                    # Regular node: simple hover
+                    hovertemplate = '<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>CPU: %{y:.2f}%<extra></extra>'
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times,
+                        y=plot_values,
+                        mode='lines',
+                        name=node_name,
+                        hovertemplate=hovertemplate
+                    )
+                )
+
+        fig.update_layout(
+            title="CPU Usage Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="CPU Usage (%)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "cpu_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+
+        # Inject container panel JavaScript
+        inject_container_panel(output_path, container_map)
+
+        charts_created.append(("CPU Timeline", output_path))
+
+    # Create Memory timeline chart
+    if "memory" in metrics_to_plot and has_memory:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+            mem_values = node_data["rss_mb"]
+            plot_times = [t for t, v in zip(times, mem_values) if v is not None]
+            plot_values = [v for v in mem_values if v is not None]
+
+            if plot_values:
+                # Check if this node is a container
+                node_meta = metadata.get(node_name, {})
+                is_container = node_meta.get("is_container", False)
+
+                if is_container and node_name in container_map:
+                    # Container: show contained nodes in hover
+                    contained_nodes = container_map[node_name]
+                    if contained_nodes:
+                        nodes_list = "<br>Contains: " + ", ".join(contained_nodes[:5])
+                        if len(contained_nodes) > 5:
+                            nodes_list += f", ... ({len(contained_nodes)-5} more)"
+                    else:
+                        nodes_list = "<br>Contains: (empty)"
+
+                    hovertemplate = f'<b>Container: %{{fullData.name}}</b><br>Time: %{{x:.2f}}s<br>Memory: %{{y:.2f}} MB{nodes_list}<extra></extra>'
+                else:
+                    # Regular node: simple hover
+                    hovertemplate = '<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Memory: %{y:.2f} MB<extra></extra>'
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times,
+                        y=plot_values,
+                        mode='lines',
+                        name=node_name,
+                        hovertemplate=hovertemplate
+                    )
+                )
+
+        fig.update_layout(
+            title="Memory Usage Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="Memory Usage (MB)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "memory_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+
+        # Inject container panel JavaScript
+        inject_container_panel(output_path, container_map)
+
+        charts_created.append(("Memory Timeline", output_path))
+
+    # Create CPU distribution chart (sorted by average)
+    if "cpu" in metrics_to_plot and has_cpu:
+        # Calculate averages and sort
+        cpu_data = []
+        for node_name, node_data in metrics.items():
+            cpu_values = [v for v in node_data["cpu"] if v is not None]
+            if cpu_values:
+                avg_cpu = sum(cpu_values) / len(cpu_values)
+                cpu_data.append((node_name, cpu_values, avg_cpu))
+
+        # Sort by average (ascending: low to high)
+        cpu_data.sort(key=lambda x: x[2], reverse=False)
+
+        fig = go.Figure()
+        for node_name, cpu_values, avg_cpu in cpu_data:
+            # Abbreviate label, store full name for hover
+            abbreviated_name = abbreviate_name(node_name, max_len=15)
+
+            fig.add_trace(
+                go.Box(
+                    y=cpu_values,
+                    name=abbreviated_name,
+                    boxmean='sd',
+                    customdata=[node_name] * len(cpu_values),  # Array with repeated value
+                    hovertemplate='<b>%{customdata}</b><br>%{y:.2f}%<extra></extra>',
+                    hoveron='points'  # Only show hover for actual data points, not box components
+                )
+            )
+
+        fig.update_layout(
+            title="CPU Usage Distribution (sorted by average, low to high)",
+            yaxis_title="CPU Usage (%)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "cpu_distribution.html"
+        fig.write_html(str(output_path), config=chart_config)
+
+        # Inject statistics panel JavaScript with container mapping
+        inject_statistics_panel(output_path, unit="%", container_map=container_map)
+
+        charts_created.append(("CPU Distribution", output_path))
+
+    # Create Memory distribution chart (sorted by average)
+    if "memory" in metrics_to_plot and has_memory:
+        # Calculate averages and sort
+        mem_data = []
+        for node_name, node_data in metrics.items():
+            mem_values = [v for v in node_data["rss_mb"] if v is not None]
+            if mem_values:
+                avg_mem = sum(mem_values) / len(mem_values)
+                mem_data.append((node_name, mem_values, avg_mem))
+
+        # Sort by average (ascending: low to high)
+        mem_data.sort(key=lambda x: x[2], reverse=False)
+
+        fig = go.Figure()
+        for node_name, mem_values, avg_mem in mem_data:
+            # Abbreviate label, store full name for hover
+            abbreviated_name = abbreviate_name(node_name, max_len=15)
+
+            fig.add_trace(
+                go.Box(
+                    y=mem_values,
+                    name=abbreviated_name,
+                    boxmean='sd',
+                    customdata=[node_name] * len(mem_values),  # Array with repeated value
+                    hovertemplate='<b>%{customdata}</b><br>%{y:.2f} MB<extra></extra>',
+                    hoveron='points'  # Only show hover for actual data points, not box components
+                )
+            )
+
+        fig.update_layout(
+            title="Memory Usage Distribution (sorted by average, low to high)",
+            yaxis_title="Memory Usage (MB)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "memory_distribution.html"
+        fig.write_html(str(output_path), config=chart_config)
+
+        # Inject statistics panel JavaScript with container mapping
+        inject_statistics_panel(output_path, unit=" MB", container_map=container_map)
+
+        charts_created.append(("Memory Distribution", output_path))
+
+    # Create I/O timeline chart
+    if "io" in metrics_to_plot and has_io:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            # Plot read rates
+            read_values = node_data["io_read_mbps"]
+            plot_times_read = [t for t, v in zip(times, read_values) if v is not None]
+            plot_values_read = [v for v in read_values if v is not None]
+
+            if plot_values_read:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_read,
+                        y=plot_values_read,
+                        mode='lines',
+                        name=f"{node_name} (read)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>',
+                        line=dict(dash='solid')
+                    )
+                )
+
+            # Plot write rates
+            write_values = node_data["io_write_mbps"]
+            plot_times_write = [t for t, v in zip(times, write_values) if v is not None]
+            plot_values_write = [v for v in write_values if v is not None]
+
+            if plot_values_write:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_write,
+                        y=plot_values_write,
+                        mode='lines',
+                        name=f"{node_name} (write)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Rate: %{y:.2f} MB/s<extra></extra>',
+                        line=dict(dash='dash')
+                    )
+                )
+
+        fig.update_layout(
+            title="I/O Rates Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="I/O Rate (MB/s)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "io_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("I/O Timeline", output_path))
+
+    # Create GPU usage timeline chart
+    if "gpu" in metrics_to_plot and (has_gpu_mem or has_gpu_util):
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            # Plot GPU memory
+            if has_gpu_mem:
+                gpu_mem_values = node_data["gpu_mem_mb"]
+                plot_times = [t for t, v in zip(times, gpu_mem_values) if v is not None]
+                plot_values = [v for v in gpu_mem_values if v is not None]
+
+                if plot_values:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=plot_times,
+                            y=plot_values,
+                            mode='lines',
+                            name=f"{node_name}",
+                            hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>GPU Mem: %{y:.2f} MB<extra></extra>'
+                        )
+                    )
+
+        fig.update_layout(
+            title="GPU Memory Usage Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="GPU Memory (MB)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "gpu_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("GPU Timeline", output_path))
+
+    # Create GPU temp/power chart
+    if "gpu" in metrics_to_plot and (has_gpu_temp or has_gpu_power):
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            if has_gpu_temp:
+                temp_values = node_data["gpu_temp"]
+                plot_times = [t for t, v in zip(times, temp_values) if v is not None]
+                plot_values = [v for v in temp_values if v is not None]
+
+                if plot_values:
+                    fig.add_trace(
+                        go.Scatter(
+                            x=plot_times,
+                            y=plot_values,
+                            mode='lines',
+                            name=node_name,
+                            hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Temp: %{y:.0f}°C<extra></extra>'
+                        )
+                    )
+
+        fig.update_layout(
+            title="GPU Temperature Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="GPU Temperature (°C)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "gpu_temp_power.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("GPU Temp/Power", output_path))
+
+    # Create Network connections chart
+    if "network" in metrics_to_plot and has_network:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            tcp_values = node_data["tcp"]
+            plot_times = [t for t, v in zip(times, tcp_values) if v is not None]
+            plot_values = [v for v in tcp_values if v is not None]
+
+            if plot_values:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times,
+                        y=plot_values,
+                        mode='lines',
+                        name=node_name,
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>TCP: %{y:.0f}<extra></extra>'
+                    )
+                )
+
+        fig.update_layout(
+            title="Network Connections Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="Connections",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "network_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("Network Timeline", output_path))
+
+    # Create GPU clocks chart
+    if "gpu" in metrics_to_plot and has_gpu_clock:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            graphics_values = node_data["gpu_graphics_clock"]
+            plot_times = [t for t, v in zip(times, graphics_values) if v is not None]
+            plot_values = [v for v in graphics_values if v is not None]
+
+            if plot_values:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times,
+                        y=plot_values,
+                        mode='lines',
+                        name=node_name,
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Clock: %{y:.0f} MHz<extra></extra>'
+                    )
+                )
+
+        fig.update_layout(
+            title="GPU Clock Frequencies Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="Clock Frequency (MHz)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "gpu_clocks.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("GPU Clocks", output_path))
+
+    # Print summary
+    if charts_created:
+        print(f"\n✓ Generated {len(charts_created)} interactive charts in {output_dir}")
+        for chart_name, chart_path in charts_created:
+            print(f"  • {chart_name}: {chart_path.name}")
+        print("\nInteractive features:")
+        print("  • Drag to zoom, double-click to reset")
+        print("  • Hover for detailed values with process names")
+        print("  • Use toolbar to download as PNG")
+    else:
+        print("No charts generated (no matching metrics found)")
+
+
+def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
+    """Generate comprehensive statistics report."""
+    if not metrics:
+        return
+
+    stats_lines = []
+    stats_lines.append("=" * 80)
+    stats_lines.append("RESOURCE USAGE STATISTICS")
+    stats_lines.append("=" * 80)
+    stats_lines.append("")
+
+    # CPU statistics
+    cpu_stats = []
+    for node_name, node_data in metrics.items():
+        cpu_values = [v for v in node_data["cpu"] if v is not None]
+        if cpu_values:
+            cpu_stats.append({
+                'node': node_name,
+                'max': max(cpu_values),
+                'avg': sum(cpu_values) / len(cpu_values)
+            })
+
+    if cpu_stats:
+        stats_lines.append("CPU USAGE (Top 10)")
+        stats_lines.append("-" * 80)
+        cpu_stats.sort(key=lambda x: x['max'], reverse=True)
+        for i, stat in enumerate(cpu_stats[:10], 1):
+            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.2f}%  Avg: {stat['avg']:6.2f}%")
+        stats_lines.append("")
+
+    # Memory statistics
+    mem_stats = []
+    for node_name, node_data in metrics.items():
+        mem_values = [v for v in node_data["rss_mb"] if v is not None]
+        if mem_values:
+            mem_stats.append({
+                'node': node_name,
+                'max': max(mem_values),
+                'avg': sum(mem_values) / len(mem_values)
+            })
+
+    if mem_stats:
+        stats_lines.append("MEMORY USAGE (Top 10)")
+        stats_lines.append("-" * 80)
+        mem_stats.sort(key=lambda x: x['max'], reverse=True)
+        for i, stat in enumerate(mem_stats[:10], 1):
+            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:8.2f} MB  Avg: {stat['avg']:8.2f} MB")
+        stats_lines.append("")
+
+    stats_lines.append("=" * 80)
+
+    # Write to file
+    with open(output_path, 'w') as f:
+        f.write('\n'.join(stats_lines))
+
+    print(f"✓ Statistics saved to {output_path}")
+
+
+def list_available_metrics(metrics: Dict[str, Dict]):
+    """List which metrics are available in the dataset."""
+    print("\nAvailable metrics in this dataset:")
+    print("=" * 50)
+
+    metric_checks = [
+        ("cpu", "CPU usage"),
+        ("rss_mb", "Memory usage"),
+        ("io_read_mbps", "I/O read rates"),
+        ("io_write_mbps", "I/O write rates"),
+        ("gpu_mem_mb", "GPU memory"),
+        ("gpu_util", "GPU utilization"),
+        ("gpu_temp", "GPU temperature"),
+        ("gpu_power_w", "GPU power"),
+        ("gpu_graphics_clock", "GPU clocks"),
+        ("tcp", "Network connections (TCP)"),
+        ("udp", "Network connections (UDP)"),
+    ]
+
+    for metric_key, metric_name in metric_checks:
+        if has_data(metrics, metric_key):
+            print(f"  ✓ {metric_name}")
+        else:
+            print(f"  ✗ {metric_name} (no data)")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Enhanced resource usage plotting from play_launch logs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Plot from latest log in current directory's play_log/
-  plot_play_launch
-
-  # Plot from specific log directory
-  plot_play_launch --log-dir /path/to/play_log/2025-10-28_16-17-56
-
-  # Plot only CPU and memory
-  plot_play_launch --metrics cpu memory
-
-  # List available metrics
-  plot_play_launch --list-metrics
-
-  # Custom base log directory
-  plot_play_launch --base-log-dir /path/to/logs
-        """
+        description="Generate interactive HTML charts from play_launch resource logs"
     )
     parser.add_argument(
         "--log-dir",
         type=Path,
-        help="Specific log directory (absolute or relative path)"
+        help="Path to specific log directory (e.g., play_log/2025-10-29_12-00-00). "
+             "If not provided, uses latest log in base-log-dir."
     )
     parser.add_argument(
         "--base-log-dir",
         type=Path,
-        default=Path.cwd() / "play_log",
+        default=Path("./play_log"),
         help="Base directory containing timestamped log directories (default: ./play_log)"
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        help="Output directory for plots (default: <log_dir>/plots)"
+        help="Directory to save dashboard and statistics (default: same as log-dir)"
     )
     parser.add_argument(
         "--metrics",
-        nargs="+",
-        choices=["cpu", "memory", "io", "gpu", "all"],
-        default=["all"],
-        help="Metrics to plot (default: all)"
+        nargs='+',
+        choices=['cpu', 'memory', 'io', 'gpu', 'network', 'all'],
+        default=['all'],
+        help="Which metrics to include in the dashboard (default: all)"
     )
     parser.add_argument(
         "--list-metrics",
@@ -787,225 +1091,52 @@ Examples:
 
     args = parser.parse_args()
 
-    # Find log directory
+    # Determine log directory
     if args.log_dir:
-        log_dir = args.log_dir.resolve()
-    else:
-        base_log_dir = args.base_log_dir.resolve()
-        if not base_log_dir.exists():
-            print(f"Error: Base log directory does not exist: {base_log_dir}")
-            print(f"Current working directory: {Path.cwd()}")
-            print(f"\nCreate play_log directory or specify --log-dir or --base-log-dir")
+        log_dir = args.log_dir
+        if not log_dir.exists():
+            print(f"Error: Log directory not found: {log_dir}")
             sys.exit(1)
-        log_dir = find_latest_log_dir(base_log_dir)
+    else:
+        try:
+            log_dir = find_latest_log_dir(args.base_log_dir)
+            print(f"Using latest log directory: {log_dir}")
+        except FileNotFoundError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
 
-    print(f"Using log directory: {log_dir}")
+    # Determine output directory
+    output_dir = args.output_dir if args.output_dir else log_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load metrics from node/ and load_node/ subdirectories
-    metrics = load_all_metrics(log_dir)
+    # Collect metrics
+    print(f"Collecting metrics from: {log_dir}")
+    metrics = collect_metrics(log_dir)
+
     if not metrics:
-        print("Error: No metrics data found")
+        print("Error: No metrics files found")
+        print(f"Expected to find metrics.csv files in:")
+        print(f"  {log_dir}/node/*/metrics.csv")
+        print(f"  {log_dir}/load_node/*/metrics.csv")
         sys.exit(1)
+
+    print(f"Found metrics for {len(metrics)} nodes")
 
     # List metrics if requested
     if args.list_metrics:
-        available = list_available_metrics(metrics)
-        print("\nAvailable metrics in this log:")
-        print("=" * 50)
-        for metric, is_available in available.items():
-            status = "✓ Available" if is_available else "✗ Not available"
-            print(f"  {metric:<10} {status}")
-        print("=" * 50)
-        print(f"\nTotal nodes: {len(metrics)}")
-        sys.exit(0)
+        list_available_metrics(metrics)
+        return
 
-    # Determine which metrics to plot
-    selected_metrics = set(args.metrics)
-    if "all" in selected_metrics:
-        selected_metrics = {"cpu", "memory", "io", "gpu"}
+    # Generate individual charts
+    create_individual_charts(metrics, output_dir, log_dir, args.metrics)
 
-    print(f"Selected metrics: {', '.join(sorted(selected_metrics))}")
+    # Generate statistics (in plot/ subdirectory)
+    stats_path = output_dir / "plot" / "statistics.txt"
+    calculate_statistics(metrics, stats_path)
 
-    # Setup output directory
-    output_dir = (args.output_dir if args.output_dir else log_dir) / "plots"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate all plots
-    print("\nGenerating plots...")
-
-    # Initialize node_colors
-    node_colors = {}
-
-    # CPU plots
-    if "cpu" in selected_metrics:
-        node_colors = plot_timeline(
-            metrics,
-            "cpu",
-            "CPU Usage (%)",
-            "CPU Usage Over Time",
-            output_dir / "cpu_usage.png",
-        )
-        plot_distribution(
-            metrics,
-            "cpu",
-            "CPU Usage (%)",
-            "CPU Usage Distribution",
-            output_dir / "cpu_distribution.png",
-            node_colors,
-        )
-
-    # Memory plots
-    if "memory" in selected_metrics:
-        if not node_colors:  # If CPU was skipped, initialize colors here
-            node_colors = plot_timeline(
-                metrics,
-                "mem",
-                "Memory (MB)",
-                "Memory Usage Over Time",
-                output_dir / "memory_usage.png",
-            )
-        else:
-            plot_timeline(
-                metrics,
-                "mem",
-                "Memory (MB)",
-                "Memory Usage Over Time",
-                output_dir / "memory_usage.png",
-                node_colors,
-            )
-        plot_distribution(
-            metrics,
-            "mem",
-            "Memory (MB)",
-            "Memory Usage Distribution",
-            output_dir / "memory_distribution.png",
-            node_colors,
-        )
-
-    # I/O plots (if data available and requested)
-    if "io" in selected_metrics:
-        if has_io_data(metrics):
-            if not node_colors:
-                node_colors = plot_timeline(
-                    metrics,
-                    "io_read_rate",
-                    "Read Rate (MB/s)",
-                    "I/O Read Rate Over Time",
-                    output_dir / "io_read_usage.png",
-                )
-            else:
-                plot_timeline(
-                    metrics,
-                    "io_read_rate",
-                    "Read Rate (MB/s)",
-                    "I/O Read Rate Over Time",
-                    output_dir / "io_read_usage.png",
-                    node_colors,
-                )
-            plot_timeline(
-                metrics,
-                "io_write_rate",
-                "Write Rate (MB/s)",
-                "I/O Write Rate Over Time",
-                output_dir / "io_write_usage.png",
-                node_colors,
-            )
-            plot_distribution(
-                metrics,
-                "io_read_rate",
-                "Read Rate (MB/s)",
-                "I/O Read Rate Distribution",
-                output_dir / "io_distribution.png",
-                node_colors,
-            )
-        else:
-            print("No I/O rate data available - skipping I/O plots")
-
-    # GPU plots (if data available and requested)
-    if "gpu" in selected_metrics:
-        if has_gpu_data(metrics):
-            if not node_colors:
-                node_colors = plot_timeline(
-                    metrics,
-                    "gpu_mem",
-                    "GPU Memory (MB)",
-                    "GPU Memory Usage Over Time",
-                    output_dir / "gpu_memory_usage.png",
-                )
-            else:
-                plot_timeline(
-                    metrics,
-                    "gpu_mem",
-                    "GPU Memory (MB)",
-                    "GPU Memory Usage Over Time",
-                    output_dir / "gpu_memory_usage.png",
-                    node_colors,
-                )
-            plot_timeline(
-                metrics,
-                "gpu_util",
-                "GPU Utilization (%)",
-                "GPU Utilization Over Time",
-                output_dir / "gpu_utilization.png",
-                node_colors,
-            )
-            plot_timeline(
-                metrics,
-                "gpu_temp",
-                "GPU Temperature (°C)",
-                "GPU Temperature Over Time",
-                output_dir / "gpu_temperature.png",
-                node_colors,
-            )
-            plot_timeline(
-                metrics,
-                "gpu_power",
-                "GPU Power (W)",
-                "GPU Power Consumption Over Time",
-                output_dir / "gpu_power.png",
-                node_colors,
-            )
-
-            # GPU clocks plot - combine graphics and memory clocks
-            plot_gpu_clocks(
-                metrics,
-                output_dir / "gpu_clocks.png",
-                node_colors,
-            )
-
-            plot_distribution(
-                metrics,
-                "gpu_mem",
-                "GPU Memory (MB)",
-                "GPU Memory Distribution",
-                output_dir / "gpu_distribution.png",
-                node_colors,
-            )
-        else:
-            print("No GPU data available - skipping GPU plots")
-
-    # Only generate legend and statistics if we plotted something
-    if node_colors:
-        # Legend
-        create_legend_image(node_colors, output_dir / "legend.png")
-
-        # Statistics
-        print("Generating statistics...")
-        stats_report = calculate_statistics(metrics, node_colors)
-        with open(output_dir / "statistics.txt", "w") as f:
-            f.write(stats_report)
-        print(f"Statistics saved to: {output_dir / 'statistics.txt'}")
-
-        # Container listing
-        container_listing = generate_container_listing(log_dir, node_colors)
-        with open(output_dir / "containers.txt", "w") as f:
-            f.write(container_listing)
-        print(f"Container listing saved to: {output_dir / 'containers.txt'}")
-
-        print(f"\nAll plots saved to: {output_dir}")
-        print("Done!")
-    else:
-        print("\nWarning: No plots were generated. Check your metric selection and data availability.")
+    print(f"\n✓ All outputs saved to: {output_dir / 'plot'}")
+    print(f"\nOpen charts in your browser by navigating to:")
+    print(f"  {(output_dir / 'plot').absolute()}")
 
 
 if __name__ == "__main__":
