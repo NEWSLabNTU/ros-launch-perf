@@ -109,6 +109,7 @@ struct PreviousSample {
     timestamp: SystemTime,
     total_read_bytes: u64,
     total_write_bytes: u64,
+    cpu_user_time: u64, // CPU time in seconds
 }
 
 /// System-wide resource metrics at a point in time
@@ -168,6 +169,7 @@ pub struct ResourceMonitor {
     gpu_device_count: u32,
     previous_samples: HashMap<u32, PreviousSample>, // PID -> previous I/O sample
     previous_system_sample: Option<PreviousSystemSample>, // Previous system sample for rate calculation
+    proc_io_warned: bool, // Track if we've warned about /proc/io unavailability
 }
 
 /// Count network connections from /proc/<pid>/net/{tcp,udp} files
@@ -261,8 +263,14 @@ impl ResourceMonitor {
             }
         }
 
+        // Initialize System with CPU information
+        // This is required for CPU usage calculation - sysinfo needs global CPU times
+        // to compute per-process CPU percentages
+        let mut system = System::new();
+        system.refresh_cpu_all(); // Initial CPU refresh to establish baseline
+
         Ok(Self {
-            system: System::new(),
+            system,
             networks: Networks::new_with_refreshed_list(),
             csv_writers: HashMap::new(),
             system_csv_writer: None,
@@ -270,6 +278,7 @@ impl ResourceMonitor {
             gpu_device_count,
             previous_samples: HashMap::new(),
             previous_system_sample: None,
+            proc_io_warned: false,
         })
     }
 
@@ -347,29 +356,40 @@ impl ResourceMonitor {
         // Parse /proc/[pid]/io for total I/O (including network)
         let (total_read_bytes, total_write_bytes) = self.parse_proc_io(pid).unwrap_or((0, 0));
 
-        // Calculate I/O rates from previous sample
+        // Calculate I/O rates and CPU percentage from previous sample
         let current_time = SystemTime::now();
-        let (total_read_rate_bps, total_write_rate_bps) = if let Some(prev) =
-            self.previous_samples.get(&pid)
-        {
-            let time_diff = current_time
-                .duration_since(prev.timestamp)
-                .unwrap_or(Duration::from_secs(0))
-                .as_secs_f64();
+        let (total_read_rate_bps, total_write_rate_bps, calculated_cpu_percent) =
+            if let Some(prev) = self.previous_samples.get(&pid) {
+                let time_diff = current_time
+                    .duration_since(prev.timestamp)
+                    .unwrap_or(Duration::from_secs(0))
+                    .as_secs_f64();
 
-            if time_diff > 0.0 {
-                let read_rate =
-                    (total_read_bytes.saturating_sub(prev.total_read_bytes)) as f64 / time_diff;
-                let write_rate =
-                    (total_write_bytes.saturating_sub(prev.total_write_bytes)) as f64 / time_diff;
-                (Some(read_rate), Some(write_rate))
+                if time_diff > 0.0 {
+                    let read_rate =
+                        (total_read_bytes.saturating_sub(prev.total_read_bytes)) as f64 / time_diff;
+                    let write_rate = (total_write_bytes.saturating_sub(prev.total_write_bytes))
+                        as f64
+                        / time_diff;
+
+                    // Manual CPU percentage calculation since sysinfo doesn't compute it for specific processes
+                    // Formula: (delta_cpu_time / delta_wall_time) * 100
+                    let cpu_time_diff = cpu_user_time.saturating_sub(prev.cpu_user_time) as f64;
+                    let cpu_pct = (cpu_time_diff / time_diff) * 100.0;
+
+                    (Some(read_rate), Some(write_rate), Some(cpu_pct))
+                } else {
+                    (None, None, None)
+                }
             } else {
-                (None, None)
-            }
-        } else {
-            // No previous sample, can't calculate rate
-            (None, None)
-        };
+                // No previous sample, can't calculate rate
+                (None, None, None)
+            };
+
+        // Override cpu_percent with our manual calculation if available
+        if let Some(calc_cpu) = calculated_cpu_percent {
+            cpu_percent = calc_cpu;
+        }
 
         // Store current sample for next iteration
         self.previous_samples.insert(
@@ -378,6 +398,7 @@ impl ResourceMonitor {
                 timestamp: current_time,
                 total_read_bytes,
                 total_write_bytes,
+                cpu_user_time,
             },
         );
 
@@ -619,35 +640,52 @@ impl ResourceMonitor {
     /// Parse /proc/[pid]/io for total I/O bytes (rchar/wchar) including network
     /// Returns (rchar, wchar) which are cumulative byte counters
     #[cfg(target_os = "linux")]
-    fn parse_proc_io(&self, pid: u32) -> Result<(u64, u64)> {
+    fn parse_proc_io(&mut self, pid: u32) -> Result<(u64, u64)> {
         let io_path = format!("/proc/{}/io", pid);
-        let content = std::fs::read_to_string(&io_path)
-            .wrap_err_with(|| format!("Failed to read {}", io_path))?;
 
-        let mut rchar = 0u64;
-        let mut wchar = 0u64;
+        match std::fs::read_to_string(&io_path) {
+            Ok(content) => {
+                let mut rchar = 0u64;
+                let mut wchar = 0u64;
 
-        for line in content.lines() {
-            let parts: Vec<&str> = line.split(':').collect();
-            if parts.len() != 2 {
-                continue;
+                for line in content.lines() {
+                    let parts: Vec<&str> = line.split(':').collect();
+                    if parts.len() != 2 {
+                        continue;
+                    }
+
+                    let key = parts[0].trim();
+                    let value = parts[1].trim().parse::<u64>().unwrap_or(0);
+
+                    match key {
+                        "rchar" => rchar = value,
+                        "wchar" => wchar = value,
+                        _ => {}
+                    }
+                }
+
+                Ok((rchar, wchar))
             }
-
-            let key = parts[0].trim();
-            let value = parts[1].trim().parse::<u64>().unwrap_or(0);
-
-            match key {
-                "rchar" => rchar = value,
-                "wchar" => wchar = value,
-                _ => {}
+            Err(e) => {
+                // Warn once if /proc/[pid]/io is not available (common on some systems like Jetson/Tegra)
+                if !self.proc_io_warned {
+                    warn!(
+                        "Per-process I/O metrics not available: {}. \
+                         This is common on some Linux systems (e.g., Jetson/Tegra) where /proc/[pid]/io is not exposed. \
+                         Per-process total_read_bytes, total_write_bytes, and I/O rates will be zero. \
+                         System-wide I/O monitoring will continue to work normally.",
+                        e
+                    );
+                    self.proc_io_warned = true;
+                }
+                // Return zeros - not a fatal error
+                Ok((0, 0))
             }
         }
-
-        Ok((rchar, wchar))
     }
 
     #[cfg(not(target_os = "linux"))]
-    fn parse_proc_io(&self, _pid: u32) -> Result<(u64, u64)> {
+    fn parse_proc_io(&mut self, _pid: u32) -> Result<(u64, u64)> {
         Ok((0, 0))
     }
 
@@ -1065,9 +1103,20 @@ pub fn spawn_monitor_thread(
                 processes.keys().map(|&pid| Pid::from_u32(pid)).collect();
             if !pids_to_refresh.is_empty() {
                 debug!("MONITOR THREAD: Refreshing {} PIDs", pids_to_refresh.len());
-                monitor
-                    .system
-                    .refresh_processes(sysinfo::ProcessesToUpdate::Some(&pids_to_refresh), true);
+
+                // CRITICAL: Refresh global CPU times first!
+                // sysinfo needs this to calculate per-process CPU percentages
+                monitor.system.refresh_cpu_usage();
+
+                // Use refresh_processes_specifics to explicitly request CPU, memory, and disk I/O metrics
+                monitor.system.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::Some(&pids_to_refresh),
+                    false, // don't remove dead processes (we track them separately)
+                    sysinfo::ProcessRefreshKind::new()
+                        .with_cpu()
+                        .with_disk_usage()
+                        .with_memory(),
+                );
             }
 
             for (pid, output_dir) in processes {
