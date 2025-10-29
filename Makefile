@@ -6,18 +6,21 @@ default: help
 
 .PHONY: help
 help:
-	@echo "ROS Launch Perf - 5-Stage Build System"
+	@echo "ROS Launch Perf - 3-Stage Build System"
 	@echo ""
 	@echo "Setup Commands:"
 	@echo "  make install-deps           - Install all dependencies (git submodules, colcon, cargo-ament, rosdep)"
 	@echo ""
 	@echo "Build Commands:"
-	@echo "  make build                  - Build entire project (all 5 stages)"
+	@echo "  make build                  - Build entire project (all 3 stages)"
 	@echo "  make build_ros2_rust        - Stage 1: Build ROS2 Rust base packages"
 	@echo "  make build_interface        - Stage 2: Build ROS interface packages"
-	@echo "  make build_dump_launch      - Stage 3: Build dump_launch Python package"
-	@echo "  make build_play_launch      - Stage 4: Build play_launch Rust package"
-	@echo "  make build_tools            - Stage 5: Build analysis tools and wrappers"
+	@echo "  make build_packages         - Stage 3: Build application packages (dump_launch, play_launch, tools)"
+	@echo ""
+	@echo "Individual Package Builds:"
+	@echo "  make build_dump_launch      - Build dump_launch Python package only"
+	@echo "  make build_play_launch      - Build play_launch Rust package only"
+	@echo "  make build_tools            - Build analysis tools and wrappers only"
 	@echo ""
 	@echo "Development:"
 	@echo "  make clean                  - Clean all build artifacts"
@@ -68,7 +71,7 @@ prepare:
 	rosdep install --from-paths src --ignore-src -r -y
 
 .PHONY: build
-build: build_ros2_rust build_interface build_dump_launch build_play_launch build_tools
+build: build_ros2_rust build_interface build_packages
 
 .PHONY: build_ros2_rust
 build_ros2_rust:
@@ -86,6 +89,9 @@ build_interface:
 	export RUST_LOG=info && \
 	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/interface 2>&1 | tee $(LOG_DIR)/interface.log
 
+.PHONY: build_packages
+build_packages: build_dump_launch build_play_launch build_tools
+
 .PHONY: build_dump_launch
 build_dump_launch:
 	@echo "Stage 3: Building dump_launch... (log: $(LOG_DIR)/dump_launch.log)"
@@ -96,7 +102,7 @@ build_dump_launch:
 
 .PHONY: build_play_launch
 build_play_launch:
-	@echo "Stage 4: Building play_launch... (log: $(LOG_DIR)/play_launch.log)"
+	@echo "Stage 3: Building play_launch... (log: $(LOG_DIR)/play_launch.log)"
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	export RUST_LOG=info && \
@@ -104,7 +110,7 @@ build_play_launch:
 
 .PHONY: build_tools
 build_tools:
-	@echo "Stage 5: Building analysis tools and wrappers... (log: $(LOG_DIR)/tools.log)"
+	@echo "Stage 3: Building analysis tools and wrappers... (log: $(LOG_DIR)/tools.log)"
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch_wrapper src/play_launch_analyzer 2>&1 | tee $(LOG_DIR)/tools.log
