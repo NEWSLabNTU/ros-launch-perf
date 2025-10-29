@@ -668,6 +668,89 @@ timestamp,pid,cpu_percent,cpu_user_secs,rss_bytes,vms_bytes,io_read_bytes,io_wri
 - **No fallback**: Direct NVML API only, no nvidia-smi subprocess parsing
 - **Fail-soft**: NVML initialization failure does not prevent play_launch from running
 
+### System-Wide Statistics Collection
+
+**Purpose**: Collect overall system resource utilization alongside per-process metrics to understand total system load.
+
+**Status**: ✅ Phase 1 Complete (CPU, memory, network, disk I/O)
+
+**Output File**: `play_log/<timestamp>/system_stats.csv` (at log directory root level)
+
+**Collected Metrics**:
+
+*CPU Metrics:*
+- `cpu_percent`: Overall CPU utilization percentage (0-100%)
+- `cpu_count`: Number of CPU cores
+
+*Memory Metrics:*
+- `total_memory_bytes`: Total system RAM
+- `used_memory_bytes`: Currently used RAM
+- `available_memory_bytes`: Available RAM for new processes
+- `total_swap_bytes`: Total swap space
+- `used_swap_bytes`: Currently used swap
+
+*Network Metrics (aggregated across all interfaces):*
+- `network_rx_bytes`: Cumulative bytes received
+- `network_tx_bytes`: Cumulative bytes transmitted
+- `network_rx_rate_bps`: Receive rate in bytes/sec
+- `network_tx_rate_bps`: Transmit rate in bytes/sec
+
+*Disk I/O Metrics (aggregated across all disks):*
+- `disk_read_bytes`: Cumulative bytes read from disk
+- `disk_write_bytes`: Cumulative bytes written to disk
+- `disk_read_rate_bps`: Read rate in bytes/sec
+- `disk_write_rate_bps`: Write rate in bytes/sec
+
+*GPU Metrics (Jetson/Tegra only, via jtop):*
+- `gpu_utilization_percent`: GPU compute utilization
+- `gpu_memory_used_bytes`: GPU memory in use
+- `gpu_memory_total_bytes`: Total GPU memory
+- `gpu_frequency_mhz`: GPU clock frequency
+- `gpu_power_milliwatts`: GPU power consumption
+- `gpu_temperature_celsius`: GPU temperature
+
+**CSV Format**:
+```csv
+timestamp,cpu_percent,cpu_count,total_memory_bytes,used_memory_bytes,available_memory_bytes,total_swap_bytes,used_swap_bytes,network_rx_bytes,network_tx_bytes,network_rx_rate_bps,network_tx_rate_bps,disk_read_bytes,disk_write_bytes,disk_read_rate_bps,disk_write_rate_bps,gpu_utilization_percent,gpu_memory_used_bytes,gpu_memory_total_bytes,gpu_frequency_mhz,gpu_power_milliwatts,gpu_temperature_celsius
+```
+
+**Example Data**:
+```csv
+2025-10-29T09:00:00.000Z,25.5,12,33285996544,16842752000,14943244544,8589934592,0,157286400,52428800,5242880.00,2097152.00,104857600,52428800,1048576.00,524288.00,,,,,
+2025-10-29T09:00:01.000Z,28.3,12,33285996544,16943820800,14842175744,8589934592,0,162529280,54526976,5242880.00,2098176.00,105906176,52953088,1048576.00,524288.00,,,,,
+```
+
+**Implementation Details**:
+- **resource_monitor.rs**:
+  - `SystemStats` struct (lines 114-149): Complete system metrics at a point in time
+  - `PreviousSystemSample` struct (lines 151-159): Previous sample for rate calculations
+  - `collect_system_stats()` method (lines 413-507): Collects all system metrics using sysinfo
+  - `parse_diskstats()` method (lines 631-677): Parses `/proc/diskstats` for disk I/O
+  - `write_system_csv()` method (lines 826-950): Writes system stats to CSV
+  - `ResourceMonitor` struct: Added `Networks`, `system_csv_writer`, `previous_system_sample` fields
+- **Monitoring loop** (lines 1098-1114): Collects and writes system stats each iteration
+- **Sampling interval**: Same as per-process monitoring (default 1000ms)
+- **Rate calculations**: First sample has no rates, subsequent samples compute bytes/sec
+- **Disk I/O source**: `/proc/diskstats` aggregated across all non-loop, non-ram devices
+- **Network source**: sysinfo `Networks` aggregated across all interfaces
+
+**Jetson GPU Integration** (Pending - Phase 2):
+- Will use `jtop` (jetson-stats) subprocess for GPU metrics
+- Gracefully handles jtop unavailability on non-Jetson systems
+- Provides system-wide GPU stats as alternative to per-process NVML (which is unsupported on Jetson)
+
+**Usage**:
+System stats are collected automatically when monitoring is enabled:
+```bash
+# Enable monitoring for all nodes
+play_launch launch demo_nodes_cpp talker_listener.launch.py --enable-monitoring
+
+# Or via config file
+play_launch replay --config config.yaml
+```
+
+System stats CSV will be created at `play_log/<timestamp>/system_stats.csv` alongside the per-node metrics in `node/` and `load_node/` directories.
+
 ## Phase 3: Visualization & Analysis
 
 ### Phase 3.1 Complete - Python Plotting Tool
