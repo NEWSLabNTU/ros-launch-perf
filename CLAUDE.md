@@ -606,6 +606,26 @@ timestamp,pid,cpu_percent,cpu_user_secs,rss_bytes,vms_bytes,io_read_bytes,io_wri
 
 **Multi-GPU Support**: Searches all GPUs to find which device(s) a process is using.
 
+**Platform-Specific Limitations**:
+
+*Jetson/Tegra GPUs (AGX Orin, Xavier, Nano):*
+- ⚠️ **Per-process GPU metrics NOT available** on Jetson/Tegra platforms
+- NVML's `running_compute_processes()` API returns "operation not available on target device"
+- This is a **hardware/driver architecture limitation**, not a software bug
+- Tegra GPUs use integrated GPU architecture that doesn't expose per-process GPU metrics via NVML
+- **Result**: GPU columns in per-process CSV files will be empty on Jetson systems
+- **CPU, memory, I/O metrics continue to work normally** (GPU failure is non-fatal)
+
+*Alternative GPU Monitoring on Jetson:*
+- Use `jtop` (jetson-stats) for **overall system GPU utilization**
+- Use `tegrastats` for overall GPU statistics
+- See system-wide stats collection (below) for Jetson GPU monitoring integration
+
+*Troubleshooting:*
+- Warning at startup: "GPU process enumeration not supported on this system"
+- Debug logs show: "Failed to get running processes for GPU 0 (PID X): the requested operation is not available on the target device"
+- This is **expected behavior** on Jetson - not an error
+
 ### I/O Rates and Network Metrics
 
 **Purpose**: Monitor comprehensive I/O activity including network traffic, and track network connection counts.
