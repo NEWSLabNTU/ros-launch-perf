@@ -525,7 +525,6 @@ def create_individual_charts(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Load metadata and build container mapping
-    print("Loading node metadata...")
     metadata = load_all_metadata(log_dir)
     container_map = build_container_mapping(metadata)
 
@@ -958,17 +957,8 @@ def create_individual_charts(
         fig.write_html(str(output_path), config=chart_config)
         charts_created.append(("GPU Clocks", output_path))
 
-    # Print summary
-    if charts_created:
-        print(f"\n✓ Generated {len(charts_created)} interactive charts in {output_dir}")
-        for chart_name, chart_path in charts_created:
-            print(f"  • {chart_name}: {chart_path.name}")
-        print("\nInteractive features:")
-        print("  • Drag to zoom, double-click to reset")
-        print("  • Hover for detailed values with process names")
-        print("  • Use toolbar to download as PNG")
-    else:
-        print("No charts generated (no matching metrics found)")
+    # Return created charts list for minimalist summary
+    return charts_created
 
 
 def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
@@ -1025,8 +1015,6 @@ def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
     # Write to file
     with open(output_path, 'w') as f:
         f.write('\n'.join(stats_lines))
-
-    print(f"✓ Statistics saved to {output_path}")
 
 
 def list_available_metrics(metrics: Dict[str, Dict]):
@@ -1100,7 +1088,6 @@ def main():
     else:
         try:
             log_dir = find_latest_log_dir(args.base_log_dir)
-            print(f"Using latest log directory: {log_dir}")
         except FileNotFoundError as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -1110,33 +1097,70 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect metrics
-    print(f"Collecting metrics from: {log_dir}")
     metrics = collect_metrics(log_dir)
 
     if not metrics:
         print("Error: No metrics files found")
-        print(f"Expected to find metrics.csv files in:")
-        print(f"  {log_dir}/node/*/metrics.csv")
-        print(f"  {log_dir}/load_node/*/metrics.csv")
+        print(f"Expected: {log_dir}/node/*/metrics.csv, {log_dir}/load_node/*/metrics.csv")
         sys.exit(1)
-
-    print(f"Found metrics for {len(metrics)} nodes")
 
     # List metrics if requested
     if args.list_metrics:
         list_available_metrics(metrics)
         return
 
+    # Print minimalist header
+    print(f"Log dir:    {log_dir}")
+    print(f"Output dir: {output_dir / 'plot'}")
+
     # Generate individual charts
-    create_individual_charts(metrics, output_dir, log_dir, args.metrics)
+    charts_created = create_individual_charts(metrics, output_dir, log_dir, args.metrics)
 
     # Generate statistics (in plot/ subdirectory)
     stats_path = output_dir / "plot" / "statistics.txt"
     calculate_statistics(metrics, stats_path)
 
-    print(f"\n✓ All outputs saved to: {output_dir / 'plot'}")
-    print(f"\nOpen charts in your browser by navigating to:")
-    print(f"  {(output_dir / 'plot').absolute()}")
+    # Print minimalist summary of generated charts
+    if charts_created:
+        print("\nGenerated:")
+        for chart_name, chart_path in charts_created:
+            print(f"  {chart_path.name}")
+        print(f"  statistics.txt")
+
+    # List charts not generated with reasons
+    requested_metrics = set(args.metrics)
+    if "all" in requested_metrics:
+        requested_metrics = {"cpu", "memory", "io", "gpu", "network"}
+
+    not_generated = []
+
+    if "cpu" in requested_metrics:
+        if not has_data(metrics, "cpu"):
+            not_generated.append("CPU charts (no data)")
+
+    if "memory" in requested_metrics:
+        if not has_data(metrics, "rss_mb"):
+            not_generated.append("Memory charts (no data)")
+
+    if "io" in requested_metrics:
+        if not (has_data(metrics, "io_read_mbps") or has_data(metrics, "io_write_mbps")):
+            not_generated.append("I/O charts (no data)")
+
+    if "gpu" in requested_metrics:
+        has_any_gpu = (has_data(metrics, "gpu_mem_mb") or has_data(metrics, "gpu_util") or
+                       has_data(metrics, "gpu_temp") or has_data(metrics, "gpu_power_w") or
+                       has_data(metrics, "gpu_graphics_clock"))
+        if not has_any_gpu:
+            not_generated.append("GPU charts (no data)")
+
+    if "network" in requested_metrics:
+        if not (has_data(metrics, "tcp") or has_data(metrics, "udp")):
+            not_generated.append("Network charts (no data)")
+
+    if not_generated:
+        print("\nNot generated:")
+        for reason in not_generated:
+            print(f"  {reason}")
 
 
 if __name__ == "__main__":
