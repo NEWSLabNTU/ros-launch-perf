@@ -178,7 +178,7 @@ Metrics are saved to `play_log/<timestamp>/node/<node_name>/metrics.csv` and `pl
 
 ## Visualization and Analysis
 
-Generate comprehensive plots and statistics from monitoring data:
+Generate comprehensive interactive plots and statistics from monitoring data:
 
 ```bash
 # Plot latest execution
@@ -196,18 +196,43 @@ plot_play_launch --list-metrics
 
 ### Generated Output
 
-Plots are saved to `play_log/<timestamp>/plots/`:
+Interactive charts are saved to `play_log/<timestamp>/plot/` as separate HTML files (~4-5 MB each):
 
-- **Timeline plots**: CPU, memory, I/O, GPU metrics over time
-- **Distribution plots**: Box plots showing statistical distributions
-- **Legend**: Node index mappings
-- **Statistics report**: Top 10 rankings for all metrics (max/avg)
+**Timeline Charts** (show metrics over time):
+- `cpu_timeline.html` - CPU usage over time
+- `memory_timeline.html` - Memory usage over time
+- `io_timeline.html` - I/O read/write rates (when available)
+- `network_timeline.html` - TCP/UDP connections (when available)
+- `gpu_timeline.html` - GPU memory usage (when available)
+- `gpu_temp_power.html` - GPU temperature and power (when available)
+- `gpu_clocks.html` - GPU clock frequencies (when available)
 
-Example statistics include:
-- Top nodes by CPU/memory usage
-- Top nodes by I/O rates
-- Top nodes by GPU utilization (when available)
-- Network connection counts
+**Distribution Charts** (statistical distributions):
+- `cpu_distribution.html` - CPU distribution box plot sorted by average
+- `memory_distribution.html` - Memory distribution box plot sorted by average
+
+**Statistics Report**:
+- `statistics.txt` - Top 10 rankings for all metrics (max/avg)
+
+### Interactive Features
+
+- **Full-screen viewing**: Each chart in its own file for maximum size
+- **Container awareness**:
+  - Timeline charts: Hover over a container curve to see list of contained nodes in a floating panel
+  - Distribution charts: Hover over a container to see statistics + contained nodes in floating panel
+- **Abbreviated labels**: Distribution plots use short labels to save space, full names shown on hover
+- **No legend clutter**: Process names appear in hover tooltips instead of a legend
+- **Zoom and pan**: Drag to zoom into specific time ranges, double-click to reset
+- **Hover tooltips**: Detailed values with full process names at each data point
+- **Download**: Use toolbar to export charts as PNG images
+
+### Statistics Report
+
+Example statistics in `statistics.txt`:
+- Top 10 nodes by CPU/memory usage (max and average)
+- Top 10 nodes by I/O rates
+- Top 10 nodes by GPU utilization (when available)
+- Top 10 nodes by network connections
 
 
 ## Command Reference

@@ -63,13 +63,15 @@ The tool generates individual interactive charts and statistics in `<log_dir>/pl
 
 **Interactive Charts** (separate HTML files, ~4-5 MB each):
 - `cpu_timeline.html` - CPU usage over time
-  - Containers show list of contained composable nodes on hover
+  - Hover over container curves → floating panel shows list of contained composable nodes
 - `memory_timeline.html` - Memory usage over time
-  - Containers show list of contained composable nodes on hover
+  - Hover over container curves → floating panel shows list of contained composable nodes
 - `cpu_distribution.html` - CPU distribution box plot **sorted low to high by average**
   - Abbreviated labels (full names on hover)
+  - Hover over container → floating panel shows statistics + list of contained nodes
 - `memory_distribution.html` - Memory distribution box plot **sorted low to high by average**
   - Abbreviated labels (full names on hover)
+  - Hover over container → floating panel shows statistics + list of contained nodes
 - `io_timeline.html` - I/O read/write rates over time (when available)
 - `network_timeline.html` - TCP/UDP connections over time (when available)
 - `gpu_timeline.html` - GPU memory usage over time (when available)
@@ -78,9 +80,11 @@ The tool generates individual interactive charts and statistics in `<log_dir>/pl
 
 **Interactive Features**:
 - **Full-screen viewing**: Each chart in its own file for maximum size
-- **Container-aware tooltips**: Timeline charts show which nodes run in each container
-- **Abbreviated labels**: Distribution plots use short labels to save space
-- **No legend clutter**: Process names appear in hover tooltips instead
+- **Container-aware floating panels**:
+  - Timeline charts: Hover over container curve → shows list of contained nodes in top-left panel
+  - Distribution charts: Hover over container → shows box plot statistics + contained nodes in top-left panel
+- **Abbreviated labels**: Distribution plots use short labels to save space, full names shown on hover
+- **No legend clutter**: Process names appear in hover tooltips instead of a legend
 - **Zoom and pan**: Drag to zoom into specific time ranges, double-click to reset
 - **Hover tooltips**: Detailed values with full process names at each data point
 - **Download**: Use toolbar to export charts as PNG images
