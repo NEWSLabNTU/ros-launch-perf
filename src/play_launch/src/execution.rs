@@ -85,6 +85,7 @@ pub fn spawn_nodes(
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     shutdown_signal: Arc<tokio::sync::Notify>,
     disable_respawn: bool,
+    pgid: Option<i32>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     node_contexts
         .into_iter()
@@ -99,7 +100,7 @@ pub fn spawn_nodes(
             async move {
                 loop {
                     // Prepare execution context
-                    let exec = match context.to_exec_context() {
+                    let exec = match context.to_exec_context(pgid) {
                         Ok(exec) => exec,
                         Err(err) => {
                             error!("Unable to prepare execution for node: {err}");
@@ -214,6 +215,7 @@ pub fn spawn_or_load_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     container_names: &HashSet<String>,
     config: ComposableNodeExecutionConfig,
+    pgid: Option<i32>,
 ) -> ComposableNodeTasks {
     if config.standalone_composable_nodes {
         info!("standalone composable node: {}", load_node_contexts.len());
@@ -222,6 +224,7 @@ pub fn spawn_or_load_composable_nodes(
             load_node_contexts,
             config.process_registry.clone(),
             config.process_configs,
+            pgid,
         );
 
         ComposableNodeTasks::Standalone {
@@ -277,6 +280,7 @@ pub fn spawn_or_load_composable_nodes(
                 container_contexts,
                 nice_load_node_contexts,
                 &config,
+                pgid,
             );
 
         let container_tasks: Vec<_> = container_tasks
@@ -369,6 +373,7 @@ fn spawn_node_containers(
     container_groups: HashMap<String, NodeContainerGroup>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     process_configs: Vec<crate::config::ProcessConfig>,
+    pgid: Option<i32>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     HashMap<String, ComposableNodeGroup>,
@@ -389,7 +394,7 @@ fn spawn_node_containers(
             let mut container_pids = Vec::new();
 
             for context in container_contexts {
-                let exec = match context.to_exec_context() {
+                let exec = match context.to_exec_context(pgid) {
                     Ok(exec) => exec,
                     Err(err) => {
                         error!("Unable to prepare execution for node: {err}",);
@@ -578,6 +583,7 @@ fn spawn_node_containers_and_load_composable_nodes(
     container_contexts: Vec<NodeContainerContext>,
     load_node_contexts: Vec<ComposableNodeContext>,
     config: &ComposableNodeExecutionConfig,
+    pgid: Option<i32>,
 ) -> (
     Vec<impl Future<Output = eyre::Result<()>>>,
     impl Future<Output = ()>,
@@ -591,6 +597,7 @@ fn spawn_node_containers_and_load_composable_nodes(
         container_groups,
         config.process_registry.clone(),
         config.process_configs.clone(),
+        pgid,
     );
 
     let container_names_vec: Vec<String> = container_names.iter().cloned().collect();
@@ -640,6 +647,7 @@ fn spawn_standalone_composable_nodes(
     load_node_contexts: Vec<ComposableNodeContext>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
     process_configs: Vec<crate::config::ProcessConfig>,
+    pgid: Option<i32>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     load_node_contexts
         .into_iter()
@@ -649,7 +657,7 @@ fn spawn_standalone_composable_nodes(
                 output_dir,
                 ..
             } = &context;
-            let mut command = match context.to_standalone_node_command() {
+            let mut command = match context.to_standalone_node_command(pgid) {
                 Ok(command) => command,
                 Err(err) => {
                     error!("{log_name} fails to generate command: {err}",);

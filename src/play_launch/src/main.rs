@@ -35,7 +35,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock,
+    },
     time::Duration,
 };
 use tokio::runtime::Runtime;
@@ -58,8 +61,11 @@ fn kill_all_descendants() {
     let my_pid = process::id();
     debug!("Killing all descendant processes of PID {}", my_pid);
 
+    // Create a dummy cancellation token that's never cancelled (cleanup should always complete)
+    let cancel_token = Arc::new(AtomicBool::new(false));
+
     // Find all descendant PIDs recursively (including grandchildren)
-    let descendants = find_all_descendants(my_pid);
+    let descendants = find_all_descendants(my_pid, &cancel_token);
 
     if !descendants.is_empty() {
         debug!(
@@ -95,24 +101,71 @@ fn kill_all_descendants() {
     }
 }
 
+/// Spawn an anchor zombie process to allocate and hold a process group ID
+#[cfg(unix)]
+fn spawn_anchor_process() -> eyre::Result<(std::process::Child, i32)> {
+    use std::os::unix::process::CommandExt;
+
+    // Spawn a minimal process that exits immediately to become a zombie
+    let anchor = std::process::Command::new("true")
+        .process_group(0) // Creates new PGID = anchor's PID
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .wrap_err("Failed to spawn anchor zombie process")?;
+
+    let pgid = anchor.id() as i32;
+    debug!("Anchor zombie process created with PGID: {}", pgid);
+
+    // Don't call wait() - let it become a zombie to hold the PGID
+    Ok((anchor, pgid))
+}
+
+/// Kill an entire process group with a single signal
+#[cfg(unix)]
+fn kill_process_group(pgid: i32, signal: nix::sys::signal::Signal) {
+    use nix::{sys::signal::killpg, unistd::Pid};
+
+    match killpg(Pid::from_raw(pgid), signal) {
+        Ok(_) => debug!("Sent {:?} to process group {}", signal, pgid),
+        Err(e) => warn!("Failed to kill process group {}: {}", pgid, e),
+    }
+}
+
 /// Recursively find all descendant PIDs of a given parent PID
 #[cfg(unix)]
-fn find_all_descendants(parent_pid: u32) -> Vec<u32> {
+fn find_all_descendants(parent_pid: u32, cancel: &AtomicBool) -> Vec<u32> {
     use sysinfo::System;
+
+    // Check cancellation before doing expensive work
+    if cancel.load(Ordering::Relaxed) {
+        return Vec::new();
+    }
 
     let mut result = Vec::new();
     let mut sys = System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
 
     // Find all processes that have parent_pid as their parent
-    for (pid, process) in sys.processes() {
+    for (i, (pid, process)) in sys.processes().iter().enumerate() {
+        // Check cancellation every 100 processes
+        if i % 100 == 0 && cancel.load(Ordering::Relaxed) {
+            return result;
+        }
+
         if let Some(parent) = process.parent() {
             if parent.as_u32() == parent_pid {
                 let child_pid = pid.as_u32();
                 // Add this child
                 result.push(child_pid);
                 // Recursively find this child's descendants (grandchildren, etc.)
-                result.extend(find_all_descendants(child_pid));
+                result.extend(find_all_descendants(child_pid, cancel));
+
+                // Check cancellation after recursive call
+                if cancel.load(Ordering::Relaxed) {
+                    return result;
+                }
             }
         }
     }
@@ -271,21 +324,40 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
         file_data: HashMap::new(),
     };
 
+    // Spawn anchor zombie process to allocate PGID
+    #[cfg(unix)]
+    let (mut anchor, pgid) = spawn_anchor_process()?;
+    #[cfg(unix)]
+    debug!("Anchor process allocated PGID: {}", pgid);
+
     // Build the async runtime and run directly
     let runtime = Runtime::new()?;
     debug!(
         "Tokio runtime created (default config uses {} worker threads = num CPUs)",
         num_cpus::get()
     );
-    runtime.block_on(run_direct(&launch_dump, &args.common))?;
 
-    Ok(())
+    #[cfg(unix)]
+    let result = runtime.block_on(run_direct(&launch_dump, &args.common, pgid));
+
+    #[cfg(not(unix))]
+    let result = runtime.block_on(run_direct(&launch_dump, &args.common, 0));
+
+    // Kill anchor process
+    #[cfg(unix)]
+    {
+        let _ = anchor.kill();
+        debug!("Anchor process killed");
+    }
+
+    result
 }
 
 /// Run a launch dump directly without file I/O
 async fn run_direct(
     launch_dump: &launch_dump::LaunchDump,
     common: &options::CommonOptions,
+    pgid: i32,
 ) -> eyre::Result<()> {
     info!("=== Starting direct node execution ===");
 
@@ -375,6 +447,7 @@ async fn run_direct(
         Some(process_registry.clone()),
         shutdown_signal.clone(),
         common.disable_respawn,
+        Some(pgid),
     )
     .into_iter()
     .map(|future| future.boxed());
@@ -383,41 +456,75 @@ async fn run_direct(
     info!("Collected {} futures to wait on", wait_futures.len());
 
     // Wait for node to complete or receive signal
+    // Progressive shutdown: 1st Ctrl-C sends SIGTERM, 2nd sends SIGTERM again, 3rd sends SIGKILL
     #[cfg(unix)]
     let result = {
+        use nix::sys::signal::Signal;
+
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to register SIGTERM handler");
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .expect("Failed to register SIGINT handler");
         let shutdown_signal_clone = shutdown_signal.clone();
 
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
-                kill_all_descendants();
-                drop(wait_futures);
-                info!("All child processes terminated");
-                Ok(())
-            }
-            _ = sigterm.recv() => {
-                info!("Received SIGTERM, shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
-                kill_all_descendants();
-                drop(wait_futures);
-                info!("All child processes terminated");
-                Ok(())
-            }
-            _ = async {
-                while !wait_futures.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                    if let Err(err) = result {
-                        error!("{err}");
+        debug!("Signal handlers registered");
+
+        let shutdown_level = Arc::new(AtomicUsize::new(0));
+
+        loop {
+            tokio::select! {
+                _ = sigint.recv() => {
+                    let level = shutdown_level.fetch_add(1, Ordering::SeqCst) + 1;
+                    info!("Received SIGINT (shutdown level {})", level);
+
+                    match level {
+                        1 => {
+                            info!("Shutting down gracefully (SIGTERM)...");
+                            shutdown_signal_clone.notify_waiters();
+                            kill_process_group(pgid, Signal::SIGTERM);
+                            info!("Press Ctrl-C again to force terminate");
+                        }
+                        2 => {
+                            info!("Force terminating stubborn processes (SIGTERM)...");
+                            kill_process_group(pgid, Signal::SIGTERM);
+                            info!("Press Ctrl-C once more for immediate kill");
+                        }
+                        3 => {
+                            info!("Immediate kill! Sending SIGKILL to process group");
+                            kill_process_group(pgid, Signal::SIGKILL);
+                            drop(wait_futures);
+                            info!("All child processes terminated");
+                            break Ok(());
+                        }
+                        _ => {
+                            // Level 4+: Ignore additional Ctrl-C presses, cleanup is in progress
+                            info!("Cleanup in progress, please wait...");
+                        }
                     }
-                    let future_to_discard = wait_futures.remove(ix);
-                    drop(future_to_discard);
                 }
-            } => {
-                info!("All tasks completed normally");
-                Ok(())
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, performing immediate kill...");
+                    shutdown_signal_clone.notify_waiters();
+                    kill_process_group(pgid, Signal::SIGTERM);
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    kill_process_group(pgid, Signal::SIGKILL);
+                    drop(wait_futures);
+                    info!("All child processes terminated");
+                    break Ok(());
+                }
+                _ = async {
+                    while !wait_futures.is_empty() {
+                        let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                        if let Err(err) = result {
+                            error!("{err}");
+                        }
+                        let future_to_discard = wait_futures.remove(ix);
+                        drop(future_to_discard);
+                    }
+                } => {
+                    info!("All tasks completed normally");
+                    break Ok(());
+                }
             }
         }
     };
@@ -548,13 +655,30 @@ fn handle_replay(args: &options::ReplayArgs) -> eyre::Result<()> {
         info!("Service readiness checking disabled (set container_readiness.wait_for_service_ready: true in config to enable)");
     }
 
+    // Spawn anchor zombie process to allocate PGID
+    #[cfg(unix)]
+    let (mut anchor, pgid) = spawn_anchor_process()?;
+    #[cfg(unix)]
+    debug!("Anchor process allocated PGID: {}", pgid);
+
     // Build the async runtime.
     let runtime = Runtime::new()?;
 
     // Run the whole playing task in the runtime.
-    runtime.block_on(play(input_file, &args.common))?;
+    #[cfg(unix)]
+    let result = runtime.block_on(play(input_file, &args.common, pgid));
 
-    Ok(())
+    #[cfg(not(unix))]
+    let result = runtime.block_on(play(input_file, &args.common, 0));
+
+    // Kill anchor process
+    #[cfg(unix)]
+    {
+        let _ = anchor.kill();
+        debug!("Anchor process killed");
+    }
+
+    result
 }
 
 /// Guard that ensures child processes are cleaned up on drop
@@ -568,7 +692,7 @@ impl Drop for CleanupGuard {
 }
 
 /// Play the launch according to the launch record.
-async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Result<()> {
+async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> eyre::Result<()> {
     debug!("=== Starting play() function ===");
 
     // Install cleanup guard to ensure children are killed even if we're interrupted
@@ -708,6 +832,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         Some(process_registry.clone()),
         shutdown_signal.clone(),
         common.disable_respawn,
+        Some(pgid),
     )
     .into_iter()
     .map(|future| future.boxed());
@@ -770,6 +895,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         load_node_contexts,
         &container_names,
         composable_node_config,
+        Some(pgid),
     );
 
     // Unpack the task set to a Vec of tasks.
@@ -811,42 +937,76 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
 
     // Poll on all waiting tasks and consume finished tasks
     // one-by-one, while also listening for termination signals.
+    // Progressive shutdown: 1st Ctrl-C sends SIGTERM, 2nd sends SIGTERM again, 3rd sends SIGKILL
 
     #[cfg(unix)]
     let result = {
+        use nix::sys::signal::Signal;
+
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to register SIGTERM handler");
+        let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
+            .expect("Failed to register SIGINT handler");
         let shutdown_signal_clone = shutdown_signal.clone();
 
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
-                kill_all_descendants();
-                drop(wait_futures);
-                info!("All child processes terminated");
-                Ok(())
-            }
-            _ = sigterm.recv() => {
-                info!("Received SIGTERM, shutting down gracefully...");
-                shutdown_signal_clone.notify_waiters();
-                kill_all_descendants();
-                drop(wait_futures);
-                info!("All child processes terminated");
-                Ok(())
-            }
-            _ = async {
-                while !wait_futures.is_empty() {
-                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                    if let Err(err) = result {
-                        error!("{err}");
+        debug!("Signal handlers registered");
+
+        let shutdown_level = Arc::new(AtomicUsize::new(0));
+
+        loop {
+            tokio::select! {
+                _ = sigint.recv() => {
+                    let level = shutdown_level.fetch_add(1, Ordering::SeqCst) + 1;
+                    info!("Received SIGINT (shutdown level {})", level);
+
+                    match level {
+                        1 => {
+                            info!("Shutting down gracefully (SIGTERM)...");
+                            shutdown_signal_clone.notify_waiters();
+                            kill_process_group(pgid, Signal::SIGTERM);
+                            info!("Press Ctrl-C again to force terminate");
+                        }
+                        2 => {
+                            info!("Force terminating stubborn processes (SIGTERM)...");
+                            kill_process_group(pgid, Signal::SIGTERM);
+                            info!("Press Ctrl-C once more for immediate kill");
+                        }
+                        3 => {
+                            info!("Immediate kill! Sending SIGKILL to process group");
+                            kill_process_group(pgid, Signal::SIGKILL);
+                            drop(wait_futures);
+                            info!("All child processes terminated");
+                            break Ok(());
+                        }
+                        _ => {
+                            // Level 4+: Ignore additional Ctrl-C presses, cleanup is in progress
+                            info!("Cleanup in progress, please wait...");
+                        }
                     }
-                    let future_to_discard = wait_futures.remove(ix);
-                    drop(future_to_discard);
                 }
-            } => {
-                info!("All tasks completed normally");
-                Ok(())
+                _ = sigterm.recv() => {
+                    info!("Received SIGTERM, performing immediate kill...");
+                    shutdown_signal_clone.notify_waiters();
+                    kill_process_group(pgid, Signal::SIGTERM);
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    kill_process_group(pgid, Signal::SIGKILL);
+                    drop(wait_futures);
+                    info!("All child processes terminated");
+                    break Ok(());
+                }
+                _ = async {
+                    while !wait_futures.is_empty() {
+                        let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                        if let Err(err) = result {
+                            error!("{err}");
+                        }
+                        let future_to_discard = wait_futures.remove(ix);
+                        drop(future_to_discard);
+                    }
+                } => {
+                    info!("All tasks completed normally");
+                    break Ok(());
+                }
             }
         }
     };

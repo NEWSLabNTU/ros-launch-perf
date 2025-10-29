@@ -132,7 +132,7 @@ impl ComposableNodeContext {
         Ok(command)
     }
 
-    pub fn to_standalone_node_command(&self) -> eyre::Result<Command> {
+    pub fn to_standalone_node_command(&self, pgid: Option<i32>) -> eyre::Result<Command> {
         let ComposableNodeContext {
             output_dir, record, ..
         } = self;
@@ -154,13 +154,16 @@ impl ComposableNodeContext {
 
         let mut command: Command = command.into();
 
-        // Create a new process group to ensure all child processes are killed together
+        // Set process group: join shared PGID if provided, otherwise create new process group
         #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
+        {
+            #[allow(unused_imports)]
+            use std::os::unix::process::CommandExt;
+            if let Some(pgid) = pgid {
+                command.process_group(pgid);
+            } else {
+                command.process_group(0);
+            }
         }
 
         command.kill_on_drop(true);
@@ -180,7 +183,7 @@ pub struct NodeContext {
 }
 
 impl NodeContext {
-    pub fn to_exec_context(&self) -> eyre::Result<ExecutionContext> {
+    pub fn to_exec_context(&self, pgid: Option<i32>) -> eyre::Result<ExecutionContext> {
         let NodeContext {
             record,
             cmdline,
@@ -208,18 +211,7 @@ impl NodeContext {
         let stdout_file = File::create(stdout_path)?;
         let stderr_file = File::create(&stderr_path)?;
 
-        let mut command: tokio::process::Command = cmdline.to_command(false).into();
-        // let mut command: tokio::process::Command = record.to_command(false).into();
-
-        // Create a new process group to ensure all child processes are killed together
-        #[cfg(unix)]
-        unsafe {
-            command.pre_exec(|| {
-                // Create a new process group
-                libc::setpgid(0, 0);
-                Ok(())
-            });
-        }
+        let mut command: tokio::process::Command = cmdline.to_command(false, pgid).into();
 
         command.kill_on_drop(true);
         command.stdin(Stdio::null());

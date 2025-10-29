@@ -243,7 +243,7 @@ impl NodeCommandLine {
     }
 
     /// Create a command object.
-    pub fn to_command(&self, long_args: bool) -> Command {
+    pub fn to_command(&self, long_args: bool, pgid: Option<i32>) -> Command {
         let cmdline = self.to_cmdline(long_args);
         let (program, args) = cmdline
             .split_first()
@@ -260,11 +260,15 @@ impl NodeCommandLine {
             command.env("AMENT_PREFIX_PATH", ament_prefix_path);
         }
 
-        // Set process group to isolate child from parent's signal handling
+        // Set process group: join shared PGID if provided, otherwise create new process group
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt;
-            command.process_group(0);
+            if let Some(pgid) = pgid {
+                command.process_group(pgid);
+            } else {
+                command.process_group(0);
+            }
         }
 
         command
@@ -325,6 +329,6 @@ mod tests {
             enclave: None,
             env: HashMap::new(),
         };
-        let _ = cmdline.to_command(false);
+        let _ = cmdline.to_command(false, None);
     }
 }
