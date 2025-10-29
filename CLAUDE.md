@@ -249,6 +249,7 @@ play_launch accepts these options (play_launch/src/options.rs):
 ### CLI Flags (Simplified)
 - `--log-dir <PATH>`: Log directory (default: `play_log`)
 - `--config <PATH>` (short: `-c`): Runtime configuration file (YAML) - **Primary interface for fine-grained control**
+- `--verbose` (short: `-v`): Enable detailed logging. Shows per-node status and detailed progress in addition to summary information. Use `RUST_LOG=debug` for debug-level logging.
 - `--enable-monitoring`: Enable resource monitoring for all nodes (overrides config file)
 - `--monitor-interval-ms <MS>`: Sampling interval in milliseconds (overrides config file)
 - `--standalone-composable-nodes`: Run composable nodes standalone instead of loading into containers
