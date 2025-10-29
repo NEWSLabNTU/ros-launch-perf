@@ -1,111 +1,238 @@
 # ROS2 Launch Inspection Tool
 
-This project provides tools to record the execution of ROS 2
-launch. Then, analyze and replay the launch execution.
+A comprehensive toolkit for recording, replaying, and analyzing ROS 2 launch executions. Record any launch file once, then replay it multiple times for testing, performance analysis, and debugging.
 
 [![Watch the demo](demo.png)](demo.webm)
+
+## Features
+
+- **Record & Replay**: Capture launch file execution and replay it deterministically
+- **Single Command Usage**: Launch and replay in one step with `play_launch launch` or `play_launch run`
+- **Resource Monitoring**: Track CPU, memory, I/O, GPU usage per node
+- **Visualization**: Generate comprehensive resource usage plots and statistics
+- **Process Control**: Set CPU affinity and priorities for fine-grained control
+- **Container Support**: Full support for ROS 2 composable nodes and containers
 
 
 ## Install Pre-built Packages (Recommended)
 
-Find the latest pacakges in the [Release
-page](https://github.com/NEWSLabNTU/ros-launch-perf/releases) and
-follow the instructions.
-
+Find the latest packages in the [Release page](https://github.com/NEWSLabNTU/ros-launch-perf/releases) and follow the instructions.
 
 
 ## Install from Source
 
 ### Prerequisites
 
-- Rust toolchain
+- **ROS 2** (Humble or later)
+- **Rust toolchain**: Install from [rustup.rs](https://rustup.rs/)
+- **Python 3** with pip
 
-  Visit [rustup.rs](https://rustup.rs/) and install `rustup`.
+### Installation
 
-- uv
-
-  Visit [docs.astral.sh/uv](https://docs.astral.sh/uv/) to install it. It is
-  used to setup a Python virtual environment and to manage Python
-  project.
-
-
-- procpath
-
-  Visit the [pypi site](https://pypi.org/project/Procpath/) to install
-  this tool. This is used for resource usage profiling.
-
-
-### Build This Project
-
-Clone the project Git repository.
-
-```sh
+1. Clone the repository:
+```bash
 git clone https://github.com/NEWSLabNTU/ros-launch-perf.git
+cd ros-launch-perf
 ```
 
-Compile the project and install the `dump_launch` and `play_launch`
-commands on the system.
-
-```sh
-make install
+2. Install all dependencies:
+```bash
+make install-deps
 ```
 
-You can uninstall these commands afterwards.
+This will:
+- Download git submodules
+- Install colcon-cargo and colcon-ros-cargo extensions
+- Install cargo-ament-build for Rust ROS packages
+- Install ROS dependencies via rosdep
 
-```sh
-make uninstall
+3. Build the project:
+```bash
+make build
+```
+
+4. Source the workspace:
+```bash
+source install/setup.bash
+```
+
+5. Verify installation:
+```bash
+play_launch --help
 ```
 
 
-## Usage
+## Getting Started
 
-The workflow goes in the **dump** step and then the **play** step. The
-dump step cans the launch file and creates a `record.json`. The play
-step reads the dump and executes the launch plan. The dump only needs
-to be done once.
+### Quick Start: Launch and Replay in One Command
 
-### Step 1: Record a Launch Execution
+The easiest way to use the tool is with the `play_launch launch` or `play_launch run` commands. These automatically record and replay in a single step:
 
-The dump step runs in the same way we run a launch file. In this
-Autoware simulation example, simply replace `ros2 launch` with
-`dump_launch`.
+```bash
+# Launch a launch file
+play_launch launch <package_name> <launch_file> [arguments...]
 
-```sh
-## This is the original launch command.
-# ros2 launch \
-#     autoware_launch planning_simulator.launch.xml \
+# Example: Launch a demo
+play_launch launch demo_nodes_cpp talker_listener.launch.py
+
+# Example: Run a single node
+play_launch run demo_nodes_cpp talker
+```
+
+This is functionally equivalent to `ros2 launch` or `ros2 run`, but records the execution and replays it immediately.
+
+### Advanced: Two-Step Workflow (Dump + Replay)
+
+For more control, you can separate the recording and replay steps:
+
+#### Step 1: Record (Dump) a Launch Execution
+
+Record any ROS 2 launch file by replacing `ros2 launch` with `play_launch dump launch`:
+
+```bash
+# Original command:
+# ros2 launch autoware_launch planning_simulator.launch.xml \
 #     map_path:=$HOME/autoware_map/sample-map-planning \
 #     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
 
-dump_launch \
+# Recording command:
+play_launch dump launch \
     autoware_launch planning_simulator.launch.xml \
     map_path:=$HOME/autoware_map/sample-map-planning \
     vehicle_model:=sample_vehicle sensor_model:=sample_sensor_kit
 ```
 
-### Step 3: Play the Launch Record
+This creates a `record.json` file capturing the entire launch execution plan.
 
-This command loads the `record.json` and perform the launch execution.
+#### Step 2: Replay the Launch
 
-```sh
-play_launch
+Replay the recorded launch multiple times:
+
+```bash
+play_launch replay
 ```
 
-## Profiling Resource Usage
+The replay reads `record.json` and executes the launch plan, spawning all nodes and containers exactly as recorded.
 
-Start the launch first by `just play`. Then, run this command to
-profile per-process resource usage into `profiling.sqlite` database
-file. Press Ctrl-C to terminate the profiling.
 
-```sh
-make profile
+## Resource Monitoring
+
+Enable comprehensive per-node resource monitoring to track CPU, memory, I/O, and GPU usage.
+
+### Enable Monitoring
+
+Monitor all nodes with default settings (1 second interval):
+
+```bash
+play_launch launch demo_nodes_cpp talker_listener.launch.py --enable-monitoring
 ```
 
-Afterwards, you can generate SVG timecharts using this command.
+Or when replaying:
 
-```sh
-make plot
+```bash
+play_launch replay --enable-monitoring
 ```
+
+### Configure Monitoring
+
+For fine-grained control, use a YAML configuration file:
+
+```yaml
+# config.yaml
+monitoring:
+  enabled: true
+  sample_interval_ms: 1000  # Sample every 1 second
+
+processes:
+  # Monitor all containers with CPU affinity
+  - node_pattern: "NODE 'rclcpp_components/component_container*"
+    monitor: true
+    cpu_affinity: [0, 1]
+    nice: 5
+
+  # Specific node with higher priority
+  - node_pattern: "NODE 'rviz2/rviz2*"
+    monitor: true
+    nice: -5  # Requires CAP_SYS_NICE capability
+```
+
+Apply the configuration:
+
+```bash
+play_launch replay --config config.yaml
+```
+
+### Monitoring Output
+
+Metrics are saved to `play_log/<timestamp>/node/<node_name>/metrics.csv` and `play_log/<timestamp>/load_node/<node_name>/metrics.csv` with the following data:
+
+- **CPU**: Usage percentage, user/system time
+- **Memory**: RSS, VMS
+- **I/O**: Read/write bytes, rates
+- **Network**: TCP/UDP connection counts
+- **GPU** (if available): Memory, utilization, temperature, power
+- **Process**: State, thread count, file descriptor count
+
+
+## Visualization and Analysis
+
+Generate comprehensive plots and statistics from monitoring data:
+
+```bash
+# Plot latest execution
+plot_play_launch
+
+# Plot specific log directory
+plot_play_launch --log-dir play_log/2025-10-28_16-17-56
+
+# Plot only CPU and memory
+plot_play_launch --metrics cpu memory
+
+# List available metrics
+plot_play_launch --list-metrics
+```
+
+### Generated Output
+
+Plots are saved to `play_log/<timestamp>/plots/`:
+
+- **Timeline plots**: CPU, memory, I/O, GPU metrics over time
+- **Distribution plots**: Box plots showing statistical distributions
+- **Legend**: Node index mappings
+- **Statistics report**: Top 10 rankings for all metrics (max/avg)
+
+Example statistics include:
+- Top nodes by CPU/memory usage
+- Top nodes by I/O rates
+- Top nodes by GPU utilization (when available)
+- Network connection counts
+
+
+## Command Reference
+
+```bash
+# All-in-one launch and replay
+play_launch launch <package> <launch_file> [args...]
+play_launch run <package> <executable> [args...]
+
+# Separate dump and replay
+play_launch dump launch <package> <launch_file> [args...]
+play_launch replay [--input-file record.json]
+
+# With monitoring
+play_launch launch <package> <launch_file> --enable-monitoring
+play_launch replay --enable-monitoring --monitor-interval-ms 500
+
+# With configuration
+play_launch replay --config config.yaml
+
+# Verbose output
+play_launch replay --verbose
+
+# Plot results
+plot_play_launch [--log-dir <dir>] [--metrics cpu memory io gpu]
+```
+
 
 ## Development
 
@@ -133,21 +260,7 @@ Run the full test suite (both Python and Rust):
 make test
 ```
 
-Run only unit tests:
-
-```sh
-make test-unit
-```
-
-Run only integration tests:
-
-```sh
-make test-integration
-```
-
-**Note:** Integration tests for `dump_launch` require ROS 2 to be installed and may skip if there's a Python version mismatch between the development environment and ROS 2.
 
 ## License
 
-This software is distributed under MIT license. You can read the
-[license file](LICENSE.txt).
+This software is distributed under MIT license. You can read the [license file](LICENSE.txt).
