@@ -188,7 +188,7 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 ### Respawn Support
 - **Automatic Restart**: Nodes with `respawn=True` in launch files automatically restart when they exit
 - **Respawn Delay**: `respawn_delay` parameter controls delay (in seconds) before restarting
-- **Graceful Shutdown**: Ctrl-C during respawn delay immediately stops restart and terminates cleanly
+- **Graceful Shutdown**: Ctrl-C immediately stops respawning nodes (fixed via tokio::sync::watch channel for persistent shutdown state)
 - **Regular Nodes Only**: Currently supports respawn for regular nodes and containers (composable nodes loaded into containers do NOT auto-reload on container restart)
 - **CLI Override**: Use `--disable-respawn` flag to disable all respawn behavior for testing
 - **on_exit Handlers**: Not supported - warning logged if detected in launch files
@@ -210,6 +210,7 @@ Autoware planning simulator integration test in `test/autoware_planning_simulati
 
 ## Key Recent Fixes
 
+- **2025-10-30**: Fixed respawn race condition - replaced `tokio::sync::Notify` with `tokio::sync::watch` channel for persistent shutdown state. Respawning nodes (like RViz) now stop immediately on Ctrl-C without spurious restarts. Watch channel provides both immediate `.borrow()` checks and awaitable `.changed()` notifications.
 - **2025-10-30**: Respawn support added - nodes with respawn=True automatically restart on exit, honoring respawn_delay. Ctrl-C during respawn delay stops restart gracefully. Only regular nodes supported (composable nodes limitation documented).
 - **2025-10-29**: CPU metrics completely rewritten - now parses `/proc/[pid]/stat` directly for accurate utime/stime measurement. Previous implementation incorrectly used `run_time()` (wall-clock time) instead of actual CPU time, causing all processes to show similar CPU% affected by system loading.
 - **2025-10-29**: I/O warning for Jetson (`/proc/[pid]/io` unavailable)
