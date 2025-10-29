@@ -173,6 +173,8 @@ Metrics are saved to `play_log/<timestamp>/node/<node_name>/metrics.csv` and `pl
 - **GPU** (if available): Memory, utilization, temperature, power
 - **Process**: State, thread count, file descriptor count
 
+> **Note on GPU Monitoring**: Per-process GPU metrics are NOT available on Jetson/Tegra platforms (AGX Orin, Xavier, Nano) due to hardware architecture limitations. GPU columns will be empty on these systems. CPU, memory, and I/O metrics continue to work normally. See [CLAUDE.md](CLAUDE.md) for details and Jetson-specific GPU monitoring alternatives.
+
 
 ## Visualization and Analysis
 
