@@ -17,12 +17,18 @@ ROS2 Launch Inspection Tool - A comprehensive system for recording, replaying, a
 ```sh
 make build
 ```
-This builds the entire workspace in 5 stages using colcon:
+This builds the entire workspace in 3 stages using colcon:
 1. Stage 1: ROS2 Rust base packages
 2. Stage 2: ROS interface packages
-3. Stage 3: dump_launch Python package
-4. Stage 4: play_launch Rust package
-5. Stage 5: Analysis tools and wrappers (play_launch_wrapper, play_launch_analyzer)
+3. Stage 3: Application packages (dump_launch, play_launch, play_launch_wrapper, play_launch_analyzer)
+
+You can also build individual components:
+```sh
+make build_packages         # Build all application packages (stage 3)
+make build_dump_launch      # Build dump_launch only
+make build_play_launch      # Build play_launch only
+make build_tools            # Build analysis tools and wrappers only
+```
 
 ### Source Workspace
 After building, source the workspace to use the tools:
@@ -45,25 +51,45 @@ Installs ROS dependencies using rosdep.
 
 ### Running the Tools
 
-After sourcing the workspace, you can run the tools directly:
+After sourcing the workspace, you can run the tools using several workflows:
 
-Record a launch execution:
+**All-in-One Commands** (record and replay in one step):
 ```sh
-ros2 run dump_launch dump_launch <package> <launch_file> [args...]
+# Launch a launch file
+play_launch launch <package> <launch_file> [args...]
+
+# Run a single node
+play_launch run <package> <executable> [args...]
 ```
 
-Replay the recorded launch (using wrapper):
+**Two-Step Workflow** (record, then replay separately):
 ```sh
-play_launch [options]
+# Step 1: Record (dump) a launch execution
+play_launch dump launch <package> <launch_file> [args...]
+
+# Step 2: Replay the recorded execution
+play_launch replay [--input-file record.json]
 ```
 
-Or use the full ROS command:
+**With Options**:
 ```sh
-ros2 run play_launch play_launch [options]
+# Enable resource monitoring
+play_launch launch <package> <launch_file> --enable-monitoring
+
+# Use configuration file
+play_launch replay --config config.yaml
+
+# Verbose logging
+play_launch replay --verbose
 ```
 
+**Alternative**: You can also use the full ROS command format:
+```sh
+ros2 run play_launch play_launch launch <package> <launch_file>
+ros2 run play_launch play_launch replay
+```
 
-Analyze and plot resource usage:
+**Analyze and plot resource usage**:
 ```sh
 # Plot latest log directory
 plot_play_launch
@@ -71,8 +97,11 @@ plot_play_launch
 # Plot specific log directory
 plot_play_launch --log-dir play_log/2025-10-28_16-17-56
 
-# Specify output directory
-plot_play_launch --output-dir /tmp/plots
+# Plot only specific metrics
+plot_play_launch --metrics cpu memory
+
+# List available metrics
+plot_play_launch --list-metrics
 ```
 
 **Note**: The `play_launch` and `plot_play_launch` commands are available in PATH thanks to the `play_launch_wrapper` and `play_launch_analyzer` packages.
@@ -473,16 +502,16 @@ See `docs/resource-monitoring-design.md` for comprehensive design document.
 **Example usage**:
 ```bash
 # Enable monitoring for all nodes with default 1s interval
-ros2 run play_launch play_launch --enable-monitoring
+play_launch replay --enable-monitoring
 
 # Use config file for fine-grained control
-ros2 run play_launch play_launch --config config.yaml
+play_launch replay --config config.yaml
 
 # Short form
-ros2 run play_launch play_launch -c config.yaml
+play_launch replay -c config.yaml
 
 # Override config with CLI flags
-ros2 run play_launch play_launch -c config.yaml --enable-monitoring --monitor-interval-ms 500
+play_launch replay -c config.yaml --enable-monitoring --monitor-interval-ms 500
 ```
 
 **Example config.yaml**:
@@ -540,7 +569,7 @@ getcap install/play_launch/lib/play_launch/play_launch
 . install/setup.bash
 
 # Use negative nice values in config (works without sudo if capability is set)
-ros2 run play_launch play_launch -c config.yaml
+play_launch replay -c config.yaml
 ```
 
 **Note**: The capability must be reapplied after each rebuild since colcon overwrites the binary.
@@ -690,6 +719,77 @@ python3 scripts/plot_resource_usage.py --output-dir custom_plots
 - See `docs/resource-monitoring-design.md` for complete roadmap
 
 ## Recent Changes
+
+### 2025-10-29: Logging Verbosity Control
+
+**Changes Made:**
+- **Revised Logging Strategy**: Changed from level-based control (WARN vs INFO) to detail-based control within INFO level
+  - Default log level changed from WARN to INFO
+  - `--verbose` flag now controls detail amount, not log level
+  - Infrastructure logs remain as DEBUG (hidden by default)
+
+- **Global Verbose Flag**: Added `VERBOSE_LOGGING` static variable using `OnceLock<bool>`
+  - Added public `is_verbose()` helper function accessible throughout crate
+  - Initialize flag in `main()` after parsing command-line options
+
+- **Unconditional INFO Logs** (always visible):
+  - "Node contexts prepared: X containers, Y pure nodes"
+  - "Composable node contexts prepared: X load_node contexts"
+  - "Spawning non-container nodes..."
+  - "node containers: X"
+  - "orphan composable node: X"
+  - "Waiting for X container(s) to start..."
+  - "All X container(s) are running"
+  - "Done loading X out of Y composable nodes."
+  - "Loading composable nodes..."
+  - "Done loading all composable nodes"
+
+- **Conditional INFO Logs** (only with `--verbose`):
+  - `[node_name] finishes` - per-node completion
+  - `Successfully loaded (unique_id: X)` - per-composable-node load success
+  - `loading finishes successfully via service` - per-composable-node completion
+  - `Container 'X' is ready` - per-container readiness messages
+
+**Files Modified:**
+- `src/play_launch/src/main.rs`: Added VERBOSE_LOGGING static, is_verbose() helper, changed default level to INFO
+- `src/play_launch/src/execution.rs`: Made per-node and per-composable-node success logs conditional
+- `src/play_launch/src/container_readiness.rs`: Made per-container ready messages conditional
+- `CLAUDE.md`: Updated --verbose flag documentation
+- `README.md`: Completely rewritten for end-users with focus on `launch` and `run` subcommands
+
+**Behavior:**
+
+*Without `--verbose` flag:*
+```
+INFO logs show overall status, counts, and progress summaries
+Example:
+  - Node contexts prepared: 15 containers, 46 pure nodes
+  - Composable node contexts prepared: 52 load_node contexts
+  - Spawning non-container nodes...
+  - Loading composable nodes...
+  - Done loading 10 out of 52 composable nodes.
+  - All 15 container(s) are running
+```
+
+*With `--verbose` flag:*
+```
+INFO logs show everything above PLUS per-item details
+Example additional output:
+  - [control_evaluator] finishes
+  - Container '/control/control_container' is ready
+  - COMPOSABLE_NODE 'vehicle_cmd_gate': Successfully loaded (unique_id: 5)
+  - COMPOSABLE_NODE 'vehicle_cmd_gate' loading finishes successfully via service
+```
+
+**Testing:**
+- Build succeeded with all changes
+- Only warnings from upstream rclrs library (lifetime elision)
+
+**Impact:**
+- ✅ Default logging now shows useful progress information without overwhelming detail
+- ✅ Verbose flag provides per-node status for debugging
+- ✅ Infrastructure details (file operations, thread lifecycle) remain hidden unless RUST_LOG=debug is set
+- ✅ Better user experience for both production and debugging scenarios
 
 ### 2025-10-28: NVML Library Loading Fix
 
