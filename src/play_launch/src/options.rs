@@ -144,4 +144,8 @@ pub struct CommonOptions {
     /// Load composable nodes that have no matching container
     #[arg(long)]
     pub load_orphan_composable_nodes: bool,
+
+    /// Disable automatic respawn even if configured in launch file
+    #[arg(long)]
+    pub disable_respawn: bool,
 }

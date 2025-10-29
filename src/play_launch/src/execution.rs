@@ -83,67 +83,126 @@ pub enum ComposableNodeTasks {
 pub fn spawn_nodes(
     node_contexts: Vec<NodeContext>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
+    shutdown_signal: Arc<tokio::sync::Notify>,
+    disable_respawn: bool,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
     node_contexts
         .into_iter()
-        .filter_map(|context| {
-            let exec = match context.to_exec_context() {
-                Ok(exec) => exec,
-                Err(err) => {
-                    error!("Unable to prepare execution for node: {err}",);
-                    error!("which is caused by the node: {:#?}", context.record);
-                    return None;
-                }
-            };
-            let ExecutionContext {
-                log_name,
-                output_dir,
-                mut command,
-            } = exec;
-            let child = match command.spawn() {
-                Ok(child) => child,
-                Err(err) => {
-                    error!("{log_name} is unable to start: {err}",);
-                    error!("Check {}", output_dir.display());
-                    return None;
-                }
-            };
+        .map(|context| {
+            // Extract respawn configuration
+            let respawn_enabled = !disable_respawn && context.record.respawn.unwrap_or(false);
+            let respawn_delay_secs = context.record.respawn_delay.unwrap_or(0.0);
 
-            // Register PID for monitoring
-            if let Some(ref registry) = process_registry {
-                if let Some(pid) = child.id() {
-                    if let Ok(mut reg) = registry.lock() {
-                        reg.insert(pid, output_dir.clone());
-                        debug!(
-                            "=== REGISTERED PID {} for node {} (total in registry: {}) ===",
-                            pid,
-                            log_name,
-                            reg.len()
-                        );
-                    }
-                    // Initialize CSV file with headers immediately
-                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
-                        warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
-                    }
-                }
-            }
+            let process_registry_clone = process_registry.clone();
+            let shutdown_signal_clone = shutdown_signal.clone();
 
-            let registry_clone = process_registry.clone();
-            let pid_to_remove = child.id();
-            let task = async move {
-                let result = wait_for_node(&log_name, &output_dir, child).await;
-                // Unregister PID when process exits
-                if let Some(registry) = registry_clone {
-                    if let Some(pid) = pid_to_remove {
-                        if let Ok(mut reg) = registry.lock() {
-                            reg.remove(&pid);
-                            debug!("Unregistered PID {} for node {}", pid, log_name);
+            async move {
+                loop {
+                    // Prepare execution context
+                    let exec = match context.to_exec_context() {
+                        Ok(exec) => exec,
+                        Err(err) => {
+                            error!("Unable to prepare execution for node: {err}");
+                            error!("which is caused by the node: {:#?}", context.record);
+                            if !respawn_enabled {
+                                return Err(err);
+                            }
+                            // Wait before retry on error
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
+                                _ = shutdown_signal_clone.notified() => {
+                                    debug!("Shutdown signal received during error delay");
+                                    return Ok(());
+                                }
+                            }
+                            continue;
+                        }
+                    };
+
+                    let ExecutionContext {
+                        log_name,
+                        output_dir,
+                        mut command,
+                    } = exec;
+
+                    // Spawn the process
+                    let child = match command.spawn() {
+                        Ok(child) => child,
+                        Err(err) => {
+                            error!("{log_name} is unable to start: {err}");
+                            error!("Check {}", output_dir.display());
+                            if !respawn_enabled {
+                                return Err(err.into());
+                            }
+                            // Wait before retry on spawn error
+                            warn!("{log_name} will respawn in {:.1}s", respawn_delay_secs);
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
+                                _ = shutdown_signal_clone.notified() => {
+                                    debug!("Shutdown signal received during spawn error delay");
+                                    return Ok(());
+                                }
+                            }
+                            continue;
+                        }
+                    };
+
+                    // Register PID for monitoring
+                    if let Some(ref registry) = process_registry_clone {
+                        if let Some(pid) = child.id() {
+                            if let Ok(mut reg) = registry.lock() {
+                                reg.insert(pid, output_dir.clone());
+                                debug!(
+                                    "=== REGISTERED PID {} for node {} (total in registry: {}) ===",
+                                    pid,
+                                    log_name,
+                                    reg.len()
+                                );
+                            }
+                            // Initialize CSV file with headers immediately
+                            if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                                warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
+                            }
                         }
                     }
+
+                    let pid_to_remove = child.id();
+                    let result = wait_for_node(&log_name, &output_dir, child).await;
+
+                    // Unregister PID when process exits
+                    if let Some(ref registry) = process_registry_clone {
+                        if let Some(pid) = pid_to_remove {
+                            if let Ok(mut reg) = registry.lock() {
+                                reg.remove(&pid);
+                                debug!("Unregistered PID {} for node {}", pid, log_name);
+                            }
+                        }
+                    }
+
+                    // Check if we should respawn
+                    if !respawn_enabled {
+                        return result;
+                    }
+
+                    // Log respawn intent
+                    if result.is_err() {
+                        warn!("{log_name} exited with error, respawning in {:.1}s", respawn_delay_secs);
+                    } else if crate::is_verbose() {
+                        info!("{log_name} exited, respawning in {:.1}s", respawn_delay_secs);
+                    }
+
+                    // Apply respawn delay with shutdown handling
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
+                        _ = shutdown_signal_clone.notified() => {
+                            debug!("Shutdown signal received during respawn delay");
+                            return Ok(());
+                        }
+                    }
+
+                    // Loop continues to restart process
                 }
-                result
-            };
-            Some(task)
+            }
         })
         .collect()
 }

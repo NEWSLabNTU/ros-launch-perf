@@ -42,6 +42,8 @@ impl NodeCommandLine {
             exec_name: _,
             cmd: _,
             env,
+            respawn: _,
+            respawn_delay: _,
         } = record;
 
         let Some(package) = package else {

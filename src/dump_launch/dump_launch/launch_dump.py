@@ -18,6 +18,8 @@ class NodeRecord:
     args: Optional[List[Text]]
     cmd: List[Text]
     env: Optional[List[Tuple[Text, Text]]] = None
+    respawn: Optional[bool] = None
+    respawn_delay: Optional[float] = None
 
 
 @dataclass

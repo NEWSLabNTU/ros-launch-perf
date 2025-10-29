@@ -259,6 +259,8 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
         args: Some(args.args.clone()),
         cmd,
         env: None,
+        respawn: None,
+        respawn_delay: None,
     };
 
     let launch_dump = LaunchDump {
@@ -364,10 +366,18 @@ async fn run_direct(
         non_container_node_contexts: pure_node_contexts,
     } = prepare_node_contexts(launch_dump, &node_log_dir, &container_names)?;
 
+    // Create shutdown signal for graceful respawn termination
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+
     info!("Spawning node...");
-    let node_tasks = spawn_nodes(pure_node_contexts, Some(process_registry.clone()))
-        .into_iter()
-        .map(|future| future.boxed());
+    let node_tasks = spawn_nodes(
+        pure_node_contexts,
+        Some(process_registry.clone()),
+        shutdown_signal.clone(),
+        common.disable_respawn,
+    )
+    .into_iter()
+    .map(|future| future.boxed());
 
     let mut wait_futures: Vec<_> = node_tasks.collect();
     info!("Collected {} futures to wait on", wait_futures.len());
@@ -377,10 +387,12 @@ async fn run_direct(
     let result = {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to register SIGTERM handler");
+        let shutdown_signal_clone = shutdown_signal.clone();
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
                 kill_all_descendants();
                 drop(wait_futures);
                 info!("All child processes terminated");
@@ -388,6 +400,7 @@ async fn run_direct(
             }
             _ = sigterm.recv() => {
                 info!("Received SIGTERM, shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
                 kill_all_descendants();
                 drop(wait_futures);
                 info!("All child processes terminated");
@@ -410,26 +423,30 @@ async fn run_direct(
     };
 
     #[cfg(not(unix))]
-    let result = tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-            kill_all_descendants();
-            drop(wait_futures);
-            info!("All child processes terminated");
-            Ok(())
-        }
-        _ = async {
-            while !wait_futures.is_empty() {
-                let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                if let Err(err) = result {
-                    error!("{err}");
-                }
-                let future_to_discard = wait_futures.remove(ix);
-                drop(future_to_discard);
+    let result = {
+        let shutdown_signal_clone = shutdown_signal.clone();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
             }
-        } => {
-            info!("All tasks completed normally");
-            Ok(())
+            _ = async {
+                while !wait_futures.is_empty() {
+                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                    if let Err(err) = result {
+                        error!("{err}");
+                    }
+                    let future_to_discard = wait_futures.remove(ix);
+                    drop(future_to_discard);
+                }
+            } => {
+                info!("All tasks completed normally");
+                Ok(())
+            }
         }
     };
 
@@ -681,11 +698,19 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
         load_node_contexts.len()
     );
 
+    // Create shutdown signal for graceful respawn termination
+    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+
     // Spawn non-container nodes
     info!("Spawning non-container nodes...");
-    let non_container_node_tasks = spawn_nodes(pure_node_contexts, Some(process_registry.clone()))
-        .into_iter()
-        .map(|future| future.boxed());
+    let non_container_node_tasks = spawn_nodes(
+        pure_node_contexts,
+        Some(process_registry.clone()),
+        shutdown_signal.clone(),
+        common.disable_respawn,
+    )
+    .into_iter()
+    .map(|future| future.boxed());
 
     // Initialize component loader for service-based loading
     debug!("Initializing component loader for service-based node loading");
@@ -791,10 +816,12 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     let result = {
         let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
             .expect("Failed to register SIGTERM handler");
+        let shutdown_signal_clone = shutdown_signal.clone();
 
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
                 info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
                 kill_all_descendants();
                 drop(wait_futures);
                 info!("All child processes terminated");
@@ -802,6 +829,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
             }
             _ = sigterm.recv() => {
                 info!("Received SIGTERM, shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
                 kill_all_descendants();
                 drop(wait_futures);
                 info!("All child processes terminated");
@@ -824,26 +852,30 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
     };
 
     #[cfg(not(unix))]
-    let result = tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
-            kill_all_descendants();
-            drop(wait_futures);
-            info!("All child processes terminated");
-            Ok(())
-        }
-        _ = async {
-            while !wait_futures.is_empty() {
-                let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
-                if let Err(err) = result {
-                    error!("{err}");
-                }
-                let future_to_discard = wait_futures.remove(ix);
-                drop(future_to_discard);
+    let result = {
+        let shutdown_signal_clone = shutdown_signal.clone();
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT (Ctrl-C), shutting down gracefully...");
+                shutdown_signal_clone.notify_waiters();
+                kill_all_descendants();
+                drop(wait_futures);
+                info!("All child processes terminated");
+                Ok(())
             }
-        } => {
-            info!("All tasks completed normally");
-            Ok(())
+            _ = async {
+                while !wait_futures.is_empty() {
+                    let (result, ix, _) = futures::future::select_all(&mut wait_futures).await;
+                    if let Err(err) = result {
+                        error!("{err}");
+                    }
+                    let future_to_discard = wait_futures.remove(ix);
+                    drop(future_to_discard);
+                }
+            } => {
+                info!("All tasks completed normally");
+                Ok(())
+            }
         }
     };
 

@@ -52,6 +52,10 @@ pub struct NodeRecord {
     #[allow(dead_code)]
     pub cmd: Vec<String>,
     pub env: Option<Vec<(String, String)>>,
+    #[serde(default)]
+    pub respawn: Option<bool>,
+    #[serde(default)]
+    pub respawn_delay: Option<f64>,
 }
 
 /// The serialization format for a composable node record.

@@ -16,6 +16,9 @@ from ..launch_dump import LaunchDump, NodeRecord
 from ..utils import param_to_kv
 from .execute_process import visit_execute_process
 
+# Global flag to track if on_exit warning has been shown
+_on_exit_warning_shown = False
+
 
 def visit_node(
     node: Node, context: LaunchContext, dump: LaunchDump
@@ -128,6 +131,40 @@ def visit_node(
                     )
                     env_vars.append((key_str, value_str))
 
+    # Extract respawn configuration
+    respawn = None
+    respawn_delay = None
+    if hasattr(node, "_ExecuteLocal__respawn"):
+        try:
+            # Respawn can be a bool or a substitution
+            respawn_value = node._ExecuteLocal__respawn
+            if isinstance(respawn_value, bool):
+                respawn = respawn_value
+            else:
+                # Try to resolve substitution
+                respawn_str = substitute(respawn_value)
+                if respawn_str.lower() in ("true", "1", "yes"):
+                    respawn = True
+                elif respawn_str.lower() in ("false", "0", "no", ""):
+                    respawn = False
+        except Exception as e:
+            execute_process_logger = launch.logging.get_logger(node.name)
+            execute_process_logger.warning(f"Unable to extract respawn parameter: {e}")
+    if hasattr(node, "_ExecuteLocal__respawn_delay"):
+        respawn_delay = node._ExecuteLocal__respawn_delay
+
+    # Detect on_exit handlers and warn (once)
+    global _on_exit_warning_shown
+    if not _on_exit_warning_shown and hasattr(node, "_ExecuteLocal__on_exit"):
+        on_exit_handlers = node._ExecuteLocal__on_exit
+        if on_exit_handlers:
+            execute_process_logger = launch.logging.get_logger("dump_launch")
+            execute_process_logger.warning(
+                "One or more nodes have on_exit handlers which are NOT supported by play_launch. "
+                "Only respawn functionality is supported. on_exit handlers will be ignored during replay."
+            )
+            _on_exit_warning_shown = True
+
     # Store a node record
     node_name = node._Node__expanded_node_name
     if "<node_name_unspecified>" in node_name:
@@ -146,6 +183,8 @@ def visit_node(
         ros_args=ros_args,
         args=args,
         env=env_vars if env_vars else None,
+        respawn=respawn,
+        respawn_delay=respawn_delay,
     )
     dump.node.append(record)
 
