@@ -56,7 +56,7 @@ check-autoware:
 
 .PHONY: start-sim
 start-sim: check-autoware
-	@bash scripts/start-sim.sh
+	@./scripts/start-sim.sh
 
 .PHONY: start-sim-systemd
 start-sim-systemd: check-autoware
