@@ -1,11 +1,11 @@
 import decimal
+from io import StringIO
 from typing import Optional, Text, Tuple
 
 from rcl_interfaces.msg import Parameter
 from ruamel.yaml import YAML
-from ruamel.yaml.compat import StringIO
 
-MY_YAML = YAML(typ="safe")
+MY_YAML = YAML(typ="safe", pure=True)
 MY_YAML.default_flow_style = True
 MY_YAML.width = 65536
 
