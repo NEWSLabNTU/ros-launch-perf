@@ -62,6 +62,7 @@ plot_play_launch --metrics cpu memory           # Plot specific metrics
 - `--monitor-interval-ms <MS>`: Sampling interval (default: 1000ms)
 - `--standalone-composable-nodes`: Run composable nodes standalone
 - `--load-orphan-composable-nodes`: Load nodes without matching containers
+- `--disable-respawn`: Disable automatic respawn even if configured in launch file
 
 ### Config YAML Example
 
@@ -184,6 +185,15 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 - Retry logic: 3 attempts, 30s timeout per node
 - Namespace resolution: Relative names (e.g., `pointcloud_container`) resolved to absolute (e.g., `/pointcloud_container`)
 
+### Respawn Support
+- **Automatic Restart**: Nodes with `respawn=True` in launch files automatically restart when they exit
+- **Respawn Delay**: `respawn_delay` parameter controls delay (in seconds) before restarting
+- **Graceful Shutdown**: Ctrl-C during respawn delay immediately stops restart and terminates cleanly
+- **Regular Nodes Only**: Currently supports respawn for regular nodes and containers (composable nodes loaded into containers do NOT auto-reload on container restart)
+- **CLI Override**: Use `--disable-respawn` flag to disable all respawn behavior for testing
+- **on_exit Handlers**: Not supported - warning logged if detected in launch files
+- **Infinite Restarts**: Matches ROS2 launch behavior (no retry limit by default)
+
 ## Dependencies
 
 **Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv
@@ -200,6 +210,7 @@ Autoware planning simulator integration test in `test/autoware_planning_simulati
 
 ## Key Recent Fixes
 
+- **2025-10-30**: Respawn support added - nodes with respawn=True automatically restart on exit, honoring respawn_delay. Ctrl-C during respawn delay stops restart gracefully. Only regular nodes supported (composable nodes limitation documented).
 - **2025-10-29**: CPU metrics completely rewritten - now parses `/proc/[pid]/stat` directly for accurate utime/stime measurement. Previous implementation incorrectly used `run_time()` (wall-clock time) instead of actual CPU time, causing all processes to show similar CPU% affected by system loading.
 - **2025-10-29**: I/O warning for Jetson (`/proc/[pid]/io` unavailable)
 - **2025-10-29**: Logging verbosity control (`--verbose` for per-node details)
