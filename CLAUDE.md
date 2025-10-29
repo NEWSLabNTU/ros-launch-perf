@@ -540,6 +540,8 @@ processes:
 ```
 
 **Important Notes**:
+- ✅ **CPU metrics working** (fixed 2025-10-29): Per-process CPU percentages now calculated correctly using global CPU refresh
+- ⚠️ **I/O metrics limitation on Jetson**: `/proc/[pid]/io` not available on Jetson/Tegra kernels - per-process I/O will be zero (warning logged once). System-wide I/O metrics work normally
 - Negative nice values (-20 to -1, higher priority) require CAP_SYS_NICE capability (see Phase 2)
 - Positive nice values (1 to 19, lower priority) can be set by any user
 - GPU metrics automatically included in CSV output when NVIDIA drivers available (see Phase 2)
@@ -893,6 +895,72 @@ Example additional output:
 - ✅ Verbose flag provides per-node status for debugging
 - ✅ Infrastructure details (file operations, thread lifecycle) remain hidden unless RUST_LOG=debug is set
 - ✅ Better user experience for both production and debugging scenarios
+
+### 2025-10-29: CPU and I/O Metrics Bug Fixes
+
+**Problem Identified:**
+- CPU usage metrics showed 0% for all processes
+- I/O metrics (disk and total) showed 0 bytes for all processes
+- System-wide metrics worked correctly
+
+**Root Causes:**
+
+1. **CPU Metrics** - Missing global CPU refresh:
+   - sysinfo library requires global CPU times to calculate per-process CPU percentages
+   - `refresh_processes_specifics()` was called without prior `refresh_cpu_usage()`
+   - Result: All process CPU values remained at 0%
+
+2. **I/O Metrics** - Platform limitation:
+   - `/proc/[pid]/io` file doesn't exist on Jetson/Tegra Linux kernels
+   - File read errors were propagated as fatal errors
+   - No user-friendly warning about platform limitation
+
+**Solutions Implemented:**
+
+1. **CPU Fix** (resource_monitor.rs):
+   - Added `system.refresh_cpu_all()` in `ResourceMonitor::new()` to establish baseline (line 270)
+   - Added `monitor.system.refresh_cpu_usage()` before process refresh in monitoring loop (line 1077)
+   - Added manual CPU percentage calculation: `(delta_cpu_time / delta_wall_time) * 100` (lines 373-376)
+   - Stores `cpu_user_time` in `PreviousSample` for delta calculation (line 112)
+
+2. **I/O Warning** (resource_monitor.rs):
+   - Added `proc_io_warned: bool` field to track warning state (line 172)
+   - Modified `parse_proc_io()` signature from `&self` to `&mut self` (line 643)
+   - Wrapped file read in `match` to handle errors gracefully (lines 646-684)
+   - Emit warning once on first failure explaining platform limitation
+   - Return `(0, 0)` instead of propagating error - monitoring continues
+
+**Warning Message:**
+```
+WARN play_launch::resource_monitor: Per-process I/O metrics not available: No such file or directory.
+This is common on some Linux systems (e.g., Jetson/Tegra) where /proc/[pid]/io is not exposed.
+Per-process total_read_bytes, total_write_bytes, and I/O rates will be zero.
+System-wide I/O monitoring will continue to work normally.
+```
+
+**Results:**
+- ✅ **CPU Metrics Working**: 50-200% per process (correct for multi-threaded), 90%+ system-wide
+- ✅ **I/O Warning**: Clear one-time message about platform limitation
+- ✅ **System I/O Working**: Disk write rates ~1 MB/s tracked correctly
+- ✅ **No Log Spam**: Warning emitted only once during entire session
+- ✅ **Graceful Degradation**: Monitoring continues with zero I/O values on affected platforms
+
+**Files Modified:**
+- `src/play_launch/src/resource_monitor.rs`:
+  - Line 112: Added `cpu_user_time` to `PreviousSample`
+  - Line 172: Added `proc_io_warned` field
+  - Line 270: Added initial CPU refresh
+  - Line 281: Initialize `proc_io_warned: false`
+  - Lines 359-390: CPU percentage and I/O rate calculation with delta tracking
+  - Lines 643-685: Rewritten `parse_proc_io()` with error handling and warning
+  - Line 1077: Added CPU refresh before process refresh
+
+**Testing:**
+- Confirmed `/proc/[pid]/io` doesn't exist on Jetson Orin (Linux 5.15.136-tegra)
+- CPU metrics: All processes showing 50-200% (correct for multi-threaded ROS nodes)
+- System CPU: 90%+ during Autoware execution
+- I/O warning: Appears once at startup, no log spam
+- Build succeeds without errors
 
 ### 2025-10-28: NVML Library Loading Fix
 
