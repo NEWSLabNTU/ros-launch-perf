@@ -271,6 +271,10 @@ fn handle_run(args: &options::RunArgs) -> eyre::Result<()> {
 
     // Build the async runtime and run directly
     let runtime = Runtime::new()?;
+    debug!(
+        "Tokio runtime created (default config uses {} worker threads = num CPUs)",
+        num_cpus::get()
+    );
     runtime.block_on(run_direct(&launch_dump, &args.common))?;
 
     Ok(())
@@ -323,17 +327,24 @@ async fn run_direct(
 
     // Initialize monitoring
     let process_registry = Arc::new(Mutex::new(HashMap::<u32, PathBuf>::new()));
+    debug!("Process registry initialized (empty)");
     let _monitor_thread = if runtime_config.monitoring.enabled {
         let monitor_config = MonitorConfig {
             enabled: true,
             sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
         };
-        match spawn_monitor_thread(monitor_config, process_registry.clone(), nvml) {
+        match spawn_monitor_thread(
+            monitor_config,
+            log_dir.clone(),
+            process_registry.clone(),
+            nvml,
+        ) {
             Ok(handle) => {
                 info!(
                     "Resource monitoring enabled (interval: {}ms)",
                     runtime_config.monitoring.sample_interval_ms
                 );
+                debug!("Monitoring thread handle created successfully");
                 Some(handle)
             }
             Err(e) => {
@@ -605,7 +616,12 @@ async fn play(input_file: &Path, common: &options::CommonOptions) -> eyre::Resul
             enabled: true,
             sample_interval_ms: runtime_config.monitoring.sample_interval_ms,
         };
-        match spawn_monitor_thread(monitor_config, process_registry.clone(), nvml) {
+        match spawn_monitor_thread(
+            monitor_config,
+            log_dir.clone(),
+            process_registry.clone(),
+            nvml,
+        ) {
             Ok(handle) => {
                 info!(
                     "Resource monitoring enabled (interval: {}ms)",

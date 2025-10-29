@@ -115,11 +115,15 @@ pub fn spawn_nodes(
                     if let Ok(mut reg) = registry.lock() {
                         reg.insert(pid, output_dir.clone());
                         debug!(
-                            "Registered PID {} for node {} ({})",
+                            "=== REGISTERED PID {} for node {} (total in registry: {}) ===",
                             pid,
                             log_name,
-                            output_dir.display()
+                            reg.len()
                         );
+                    }
+                    // Initialize CSV file with headers immediately
+                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                        warn!("Failed to initialize metrics CSV for {}: {}", log_name, e);
                     }
                 }
             }
@@ -361,11 +365,15 @@ fn spawn_node_containers(
                         if let Ok(mut reg) = registry.lock() {
                             reg.insert(pid, output_dir.clone());
                             debug!(
-                                "Registered container PID {} for node {} ({})",
+                                "=== REGISTERED container PID {} for node {} (total in registry: {}) ===",
                                 pid,
                                 log_name,
-                                output_dir.display()
+                                reg.len()
                             );
+                        }
+                        // Initialize CSV file with headers immediately
+                        if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                            warn!("Failed to initialize metrics CSV for container {}: {}", log_name, e);
                         }
                     }
 
@@ -605,7 +613,11 @@ fn spawn_standalone_composable_nodes(
                 if let Some(ref registry) = process_registry {
                     if let Ok(mut reg) = registry.lock() {
                         reg.insert(pid, output_dir.clone());
-                        debug!("Registered standalone composable node PID {} for {} ({})", pid, log_name, output_dir.display());
+                        debug!("=== REGISTERED standalone composable node PID {} for {} (total in registry: {}) ===", pid, log_name, reg.len());
+                    }
+                    // Initialize CSV file with headers immediately
+                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                        warn!("Failed to initialize metrics CSV for standalone composable node {}: {}", log_name, e);
                     }
                 }
 
