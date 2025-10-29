@@ -616,7 +616,7 @@ fn spawn_standalone_composable_nodes(
                         debug!("=== REGISTERED standalone composable node PID {} for {} (total in registry: {}) ===", pid, log_name, reg.len());
                     }
                     // Initialize CSV file with headers immediately
-                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(&output_dir) {
+                    if let Err(e) = crate::resource_monitor::initialize_metrics_csv(output_dir) {
                         warn!("Failed to initialize metrics CSV for standalone composable node {}: {}", log_name, e);
                     }
                 }

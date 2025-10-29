@@ -34,7 +34,7 @@ pub struct ResourceMetrics {
 
     // CPU metrics
     pub cpu_percent: f64,
-    pub cpu_user_time: u64, // Total accumulated runtime in seconds
+    pub cpu_user_time: u64, // Total accumulated CPU time (utime + stime) in seconds
 
     // Memory metrics
     pub rss_bytes: u64, // Resident Set Size
@@ -109,7 +109,8 @@ struct PreviousSample {
     timestamp: SystemTime,
     total_read_bytes: u64,
     total_write_bytes: u64,
-    cpu_user_time: u64, // CPU time in seconds
+    utime: u64, // User CPU time in clock ticks
+    stime: u64, // System CPU time in clock ticks
 }
 
 /// System-wide resource metrics at a point in time
@@ -294,9 +295,9 @@ impl ResourceMonitor {
         // Discover subprocesses for aggregation
         let subprocess_pids = find_subprocess_pids(pid);
 
-        // Aggregate metrics from parent + all children
-        let mut cpu_percent = process.cpu_usage() as f64;
-        let mut cpu_user_time = process.run_time();
+        // Parse /proc/[pid]/stat for accurate CPU times (in clock ticks)
+        // Aggregate from parent + all children
+        let (mut utime, mut stime) = self.parse_proc_stat(pid)?;
         let mut rss_bytes = process.memory();
         let mut vms_bytes = process.virtual_memory();
         let disk_usage = process.disk_usage();
@@ -306,10 +307,15 @@ impl ResourceMonitor {
 
         // Aggregate from subprocesses
         for child_pid in &subprocess_pids {
+            // Get CPU times from /proc/[child_pid]/stat
+            if let Ok((child_utime, child_stime)) = self.parse_proc_stat(*child_pid) {
+                utime += child_utime;
+                stime += child_stime;
+            }
+
+            // Get other metrics from sysinfo
             let child_pid_obj = Pid::from_u32(*child_pid);
             if let Some(child_process) = self.system.process(child_pid_obj) {
-                cpu_percent += child_process.cpu_usage() as f64;
-                cpu_user_time += child_process.run_time();
                 rss_bytes += child_process.memory();
                 vms_bytes += child_process.virtual_memory();
                 let child_disk = child_process.disk_usage();
@@ -358,38 +364,39 @@ impl ResourceMonitor {
 
         // Calculate I/O rates and CPU percentage from previous sample
         let current_time = SystemTime::now();
-        let (total_read_rate_bps, total_write_rate_bps, calculated_cpu_percent) =
-            if let Some(prev) = self.previous_samples.get(&pid) {
-                let time_diff = current_time
-                    .duration_since(prev.timestamp)
-                    .unwrap_or(Duration::from_secs(0))
-                    .as_secs_f64();
+        let (total_read_rate_bps, total_write_rate_bps, cpu_percent) = if let Some(prev) =
+            self.previous_samples.get(&pid)
+        {
+            let time_diff = current_time
+                .duration_since(prev.timestamp)
+                .unwrap_or(Duration::from_secs(0))
+                .as_secs_f64();
 
-                if time_diff > 0.0 {
-                    let read_rate =
-                        (total_read_bytes.saturating_sub(prev.total_read_bytes)) as f64 / time_diff;
-                    let write_rate = (total_write_bytes.saturating_sub(prev.total_write_bytes))
-                        as f64
-                        / time_diff;
+            if time_diff > 0.0 {
+                // Calculate I/O rates
+                let read_rate =
+                    (total_read_bytes.saturating_sub(prev.total_read_bytes)) as f64 / time_diff;
+                let write_rate =
+                    (total_write_bytes.saturating_sub(prev.total_write_bytes)) as f64 / time_diff;
 
-                    // Manual CPU percentage calculation since sysinfo doesn't compute it for specific processes
-                    // Formula: (delta_cpu_time / delta_wall_time) * 100
-                    let cpu_time_diff = cpu_user_time.saturating_sub(prev.cpu_user_time) as f64;
-                    let cpu_pct = (cpu_time_diff / time_diff) * 100.0;
+                // Calculate CPU percentage using /proc/[pid]/stat data (utime + stime)
+                // utime and stime are in clock ticks (jiffies)
+                // CLK_TCK on Linux is typically 100 (confirmed on this system via `getconf CLK_TCK`)
+                // Formula: ((delta_utime + delta_stime) / CLK_TCK / delta_wall_time) * 100
+                const CLK_TCK: f64 = 100.0;
+                let cpu_ticks_delta =
+                    (utime.saturating_sub(prev.utime) + stime.saturating_sub(prev.stime)) as f64;
+                let cpu_time_seconds = cpu_ticks_delta / CLK_TCK;
+                let cpu_pct = (cpu_time_seconds / time_diff) * 100.0;
 
-                    (Some(read_rate), Some(write_rate), Some(cpu_pct))
-                } else {
-                    (None, None, None)
-                }
+                (Some(read_rate), Some(write_rate), cpu_pct)
             } else {
-                // No previous sample, can't calculate rate
-                (None, None, None)
-            };
-
-        // Override cpu_percent with our manual calculation if available
-        if let Some(calc_cpu) = calculated_cpu_percent {
-            cpu_percent = calc_cpu;
-        }
+                (None, None, 0.0)
+            }
+        } else {
+            // No previous sample, can't calculate rate - CPU% will be 0 for first sample
+            (None, None, 0.0)
+        };
 
         // Store current sample for next iteration
         self.previous_samples.insert(
@@ -398,9 +405,14 @@ impl ResourceMonitor {
                 timestamp: current_time,
                 total_read_bytes,
                 total_write_bytes,
-                cpu_user_time,
+                utime,
+                stime,
             },
         );
+
+        // Convert total CPU time from clock ticks to seconds
+        const CLK_TCK: f64 = 100.0;
+        let cpu_user_time = ((utime + stime) as f64 / CLK_TCK) as u64;
 
         Ok(ResourceMetrics {
             timestamp: current_time,
@@ -682,6 +694,51 @@ impl ResourceMonitor {
                 Ok((0, 0))
             }
         }
+    }
+
+    /// Parse /proc/[pid]/stat for CPU times (utime and stime)
+    /// Returns (utime, stime) in clock ticks
+    /// These values are cumulative and need to be differenced between samples
+    #[cfg(target_os = "linux")]
+    fn parse_proc_stat(&self, pid: u32) -> Result<(u64, u64)> {
+        let stat_path = format!("/proc/{}/stat", pid);
+        let content = std::fs::read_to_string(&stat_path)
+            .wrap_err_with(|| format!("Failed to read {}", stat_path))?;
+
+        // Format: pid (comm) state ppid pgrp ... utime stime cutime cstime ...
+        // We need to split on ')' because comm can contain spaces and parentheses
+        let parts: Vec<&str> = content.split(')').collect();
+        if parts.len() < 2 {
+            return Err(eyre::eyre!("Invalid /proc/{}/stat format", pid));
+        }
+
+        // After ')', fields are space-separated
+        // Field indices (0-based after splitting on ')'):
+        // 11 = utime (user mode jiffies)
+        // 12 = stime (kernel mode jiffies)
+        let fields: Vec<&str> = parts[1].split_whitespace().collect();
+        if fields.len() < 14 {
+            return Err(eyre::eyre!(
+                "Insufficient fields in /proc/{}/stat (got {}, need 14)",
+                pid,
+                fields.len()
+            ));
+        }
+
+        let utime: u64 = fields[11]
+            .parse()
+            .wrap_err_with(|| format!("Failed to parse utime from {}", stat_path))?;
+        let stime: u64 = fields[12]
+            .parse()
+            .wrap_err_with(|| format!("Failed to parse stime from {}", stat_path))?;
+
+        Ok((utime, stime))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn parse_proc_stat(&self, _pid: u32) -> Result<(u64, u64)> {
+        // CPU time parsing not implemented for non-Linux platforms
+        Ok((0, 0))
     }
 
     #[cfg(not(target_os = "linux"))]
