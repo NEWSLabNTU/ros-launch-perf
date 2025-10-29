@@ -439,7 +439,8 @@ async fn run_direct(
     } = prepare_node_contexts(launch_dump, &node_log_dir, &container_names)?;
 
     // Create shutdown signal for graceful respawn termination
-    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutdown_signal = shutdown_rx;
 
     info!("Spawning node...");
     let node_tasks = spawn_nodes(
@@ -465,7 +466,6 @@ async fn run_direct(
             .expect("Failed to register SIGTERM handler");
         let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
             .expect("Failed to register SIGINT handler");
-        let shutdown_signal_clone = shutdown_signal.clone();
 
         debug!("Signal handlers registered");
 
@@ -480,7 +480,7 @@ async fn run_direct(
                     match level {
                         1 => {
                             info!("Shutting down gracefully (SIGTERM)...");
-                            shutdown_signal_clone.notify_waiters();
+                            let _ = shutdown_tx.send(true);
                             kill_process_group(pgid, Signal::SIGTERM);
                             info!("Press Ctrl-C again to force terminate");
                         }
@@ -504,7 +504,7 @@ async fn run_direct(
                 }
                 _ = sigterm.recv() => {
                     info!("Received SIGTERM, performing immediate kill...");
-                    shutdown_signal_clone.notify_waiters();
+                    let _ = shutdown_tx.send(true);
                     kill_process_group(pgid, Signal::SIGTERM);
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     kill_process_group(pgid, Signal::SIGKILL);
@@ -823,7 +823,8 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
     );
 
     // Create shutdown signal for graceful respawn termination
-    let shutdown_signal = Arc::new(tokio::sync::Notify::new());
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let shutdown_signal = shutdown_rx;
 
     // Spawn non-container nodes
     info!("Spawning non-container nodes...");
@@ -947,7 +948,6 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
             .expect("Failed to register SIGTERM handler");
         let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())
             .expect("Failed to register SIGINT handler");
-        let shutdown_signal_clone = shutdown_signal.clone();
 
         debug!("Signal handlers registered");
 
@@ -962,7 +962,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
                     match level {
                         1 => {
                             info!("Shutting down gracefully (SIGTERM)...");
-                            shutdown_signal_clone.notify_waiters();
+                            let _ = shutdown_tx.send(true);
                             kill_process_group(pgid, Signal::SIGTERM);
                             info!("Press Ctrl-C again to force terminate");
                         }
@@ -986,7 +986,7 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
                 }
                 _ = sigterm.recv() => {
                     info!("Received SIGTERM, performing immediate kill...");
-                    shutdown_signal_clone.notify_waiters();
+                    let _ = shutdown_tx.send(true);
                     kill_process_group(pgid, Signal::SIGTERM);
                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                     kill_process_group(pgid, Signal::SIGKILL);

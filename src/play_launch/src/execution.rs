@@ -83,7 +83,7 @@ pub enum ComposableNodeTasks {
 pub fn spawn_nodes(
     node_contexts: Vec<NodeContext>,
     process_registry: Option<Arc<Mutex<HashMap<u32, PathBuf>>>>,
-    shutdown_signal: Arc<tokio::sync::Notify>,
+    shutdown_signal: tokio::sync::watch::Receiver<bool>,
     disable_respawn: bool,
     pgid: Option<i32>,
 ) -> Vec<impl Future<Output = eyre::Result<()>>> {
@@ -95,10 +95,16 @@ pub fn spawn_nodes(
             let respawn_delay_secs = context.record.respawn_delay.unwrap_or(0.0);
 
             let process_registry_clone = process_registry.clone();
-            let shutdown_signal_clone = shutdown_signal.clone();
+            let mut shutdown_signal_clone = shutdown_signal.clone();
 
             async move {
                 loop {
+                    // Check if shutdown was already signaled (handles race condition)
+                    if *shutdown_signal_clone.borrow() {
+                        debug!("Shutdown already signaled, stopping respawn loop");
+                        return Ok(());
+                    }
+
                     // Prepare execution context
                     let exec = match context.to_exec_context(pgid) {
                         Ok(exec) => exec,
@@ -111,7 +117,7 @@ pub fn spawn_nodes(
                             // Wait before retry on error
                             tokio::select! {
                                 _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
-                                _ = shutdown_signal_clone.notified() => {
+                                _ = shutdown_signal_clone.changed() => {
                                     debug!("Shutdown signal received during error delay");
                                     return Ok(());
                                 }
@@ -139,7 +145,7 @@ pub fn spawn_nodes(
                             warn!("{log_name} will respawn in {:.1}s", respawn_delay_secs);
                             tokio::select! {
                                 _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
-                                _ = shutdown_signal_clone.notified() => {
+                                _ = shutdown_signal_clone.changed() => {
                                     debug!("Shutdown signal received during spawn error delay");
                                     return Ok(());
                                 }
@@ -195,7 +201,7 @@ pub fn spawn_nodes(
                     // Apply respawn delay with shutdown handling
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs_f64(respawn_delay_secs)) => {}
-                        _ = shutdown_signal_clone.notified() => {
+                        _ = shutdown_signal_clone.changed() => {
                             debug!("Shutdown signal received during respawn delay");
                             return Ok(());
                         }
