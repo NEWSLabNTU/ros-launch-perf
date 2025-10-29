@@ -8,6 +8,9 @@ default: help
 help:
 	@echo "ROS Launch Perf - 5-Stage Build System"
 	@echo ""
+	@echo "Setup Commands:"
+	@echo "  make install-deps           - Install all dependencies (git submodules, colcon, cargo-ament, rosdep)"
+	@echo ""
 	@echo "Build Commands:"
 	@echo "  make build                  - Build entire project (all 5 stages)"
 	@echo "  make build_ros2_rust        - Stage 1: Build ROS2 Rust base packages"
@@ -31,6 +34,31 @@ help:
 	@echo "  Run play_launch:    play_launch [options]"
 	@echo "  Plot resources:     plot_play_launch [--log-dir <dir>]"
 	@echo ""
+
+.PHONY: install-deps
+install-deps:
+	@echo "Installing all dependencies..."
+	@echo ""
+	@echo "Step 1/4: Updating git submodules..."
+	git submodule update --init --recursive
+	@echo ""
+	@echo "Step 2/4: Installing colcon extensions..."
+	pip install git+https://github.com/colcon/colcon-cargo.git
+	pip install git+https://github.com/colcon/colcon-ros-cargo.git
+	@echo ""
+	@echo "Step 3/4: Installing cargo-ament-build..."
+	cargo install cargo-ament-build
+	@echo ""
+	@echo "Step 4/4: Installing ROS dependencies with rosdep..."
+	@. /opt/ros/humble/setup.sh && \
+	rosdep update && \
+	rosdep install --from-paths src --ignore-src -r -y
+	@echo ""
+	@echo "All dependencies installed successfully!"
+	@echo "Next steps:"
+	@echo "  1. Run 'make build' to build the project"
+	@echo "  2. Source the workspace: . install/setup.bash"
+	@echo "  3. Check help: play_launch --help"
 
 .PHONY: prepare
 prepare:
