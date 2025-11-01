@@ -5,6 +5,7 @@ mod container_readiness;
 mod context;
 mod dump_launcher;
 mod execution;
+mod io_helper_client;
 mod launch_dump;
 mod node_cmdline;
 mod options;
