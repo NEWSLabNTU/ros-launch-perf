@@ -615,6 +615,411 @@ play_launch launch autoware_launch planning_simulator.launch.xml \
 
 ---
 
+## Phase 6: I/O Helper Integration
+
+**Goal**: Replace direct `/proc/[pid]/io` reads with privileged helper daemon to enable I/O monitoring for processes with capabilities set (containers, privileged nodes).
+
+**Status**: ⏳ Planned
+
+**Estimated Effort**: 2-3 days
+
+### Background
+
+Current I/O monitoring reads `/proc/[pid]/io` directly, which fails with EPERM (Permission Denied) when monitoring processes that have file capabilities set. This affects ROS 2 containers and nodes with elevated privileges, as the kernel clears the "dumpable" flag for security.
+
+**Solution**: A separate helper daemon (`play_launch_io_helper`) with `CAP_SYS_PTRACE` capability can read these files. Communication uses anonymous pipes for security and automatic cleanup.
+
+**Infrastructure**: ✅ Complete (Phase 5.5)
+- Helper daemon binary built and installed
+- IPC protocol defined (Request/Response enums)
+- IoHelperClient with async API (spawn, read_proc_io, read_proc_io_batch, shutdown)
+- Anonymous pipe-based communication
+- PR_SET_PDEATHSIG for orphan prevention
+
+### Work Items
+
+#### 6.1 Extend ResourceMetrics Structure
+
+**File**: `src/play_launch/src/resource_monitor.rs`
+
+**Changes**:
+```rust
+pub struct ResourceMetrics {
+    // ... existing fields (timestamp, cpu_usage, memory_rss, etc.) ...
+
+    // Current I/O fields (2):
+    pub total_read_bytes: u64,   // rchar
+    pub total_write_bytes: u64,  // wchar
+
+    // NEW: Extended I/O fields (5 additional):
+    pub io_syscr: u64,                    // Read syscalls count
+    pub io_syscw: u64,                    // Write syscalls count
+    pub io_read_bytes: u64,               // Actual bytes read from storage
+    pub io_write_bytes: u64,              // Actual bytes written to storage
+    pub io_cancelled_write_bytes: u64,    // Write bytes later truncated
+}
+```
+
+**Rationale**: Helper provides all 7 fields from `/proc/[pid]/io`. Capturing complete data enables:
+- Syscall vs actual I/O analysis
+- Cache hit ratio calculation (rchar/wchar vs read_bytes/write_bytes)
+- Write cancellation tracking
+
+**CSV Impact**: Adds 5 new columns to `metrics.csv` (backward compatible, existing columns unchanged)
+
+#### 6.2 Add Helper Client to ResourceMonitor
+
+**File**: `src/play_launch/src/resource_monitor.rs` (struct definition ~line 164)
+
+**Changes**:
+```rust
+pub struct ResourceMonitor {
+    // ... existing fields ...
+
+    // NEW: I/O helper infrastructure
+    io_helper: Option<IoHelperClient>,         // Helper client instance
+    tokio_runtime: Option<tokio::runtime::Runtime>, // Async runtime for helper calls
+    io_helper_unavailable: bool,               // Track if helper failed to spawn
+}
+```
+
+**Initialization** (in `ResourceMonitor::new()` ~line 226):
+```rust
+// Try to spawn I/O helper (non-fatal if unavailable)
+let (io_helper, tokio_runtime) = match tokio::runtime::Runtime::new() {
+    Ok(rt) => {
+        match rt.block_on(IoHelperClient::spawn()) {
+            Ok(client) => {
+                info!("I/O helper spawned successfully");
+                (Some(client), Some(rt))
+            }
+            Err(e) => {
+                warn!("I/O helper unavailable: {}. Privileged processes will have zero I/O stats.", e);
+                (None, None)
+            }
+        }
+    }
+    Err(e) => {
+        warn!("Failed to create Tokio runtime for I/O helper: {}", e);
+        (None, None)
+    }
+};
+
+Self {
+    // ... existing initialization ...
+    io_helper,
+    tokio_runtime,
+    io_helper_unavailable: io_helper.is_none(),
+}
+```
+
+**Cleanup** (add to monitoring thread before exit):
+```rust
+// Shutdown helper before thread exits
+if let Some(helper) = self.io_helper.take() {
+    if let Some(rt) = self.tokio_runtime.as_ref() {
+        if let Err(e) = rt.block_on(helper.shutdown()) {
+            warn!("Error shutting down I/O helper: {}", e);
+        }
+    }
+}
+```
+
+#### 6.3 Replace parse_proc_io() with Batch Helper Calls
+
+**File**: `src/play_launch/src/resource_monitor.rs`
+
+**Remove**: `parse_proc_io(&mut self, pid: u32) -> Result<(u64, u64)>` method (~line 652)
+
+**Add**: Batch I/O reading in monitoring loop (before per-PID iteration ~line 1142):
+
+```rust
+// Batch read I/O stats for all PIDs (single IPC call)
+let io_stats_map: HashMap<u32, ProcIoStats> = if let (Some(ref mut helper), Some(ref rt)) =
+    (&mut self.io_helper, &self.tokio_runtime)
+{
+    // Collect all PIDs
+    let pids: Vec<u32> = processes.keys().copied().collect();
+
+    // Single batch request to helper
+    match rt.block_on(helper.read_proc_io_batch(&pids)) {
+        Ok(results) => {
+            results.into_iter()
+                .filter_map(|r| {
+                    match r.result {
+                        Ok(stats) => Some((r.pid, stats)),
+                        Err(e) => {
+                            debug!("I/O read failed for PID {}: {:?}", r.pid, e);
+                            None
+                        }
+                    }
+                })
+                .collect()
+        }
+        Err(e) => {
+            if !self.io_helper_unavailable {
+                warn!("I/O helper batch request failed: {}. I/O stats will be zero.", e);
+                self.io_helper_unavailable = true;
+            }
+            HashMap::new()
+        }
+    }
+} else {
+    // Helper unavailable - all I/O stats will be zero
+    HashMap::new()
+};
+```
+
+**Update**: `collect_metrics()` method (~line 363):
+
+```rust
+// OLD:
+// let (total_read_bytes, total_write_bytes) = self.parse_proc_io(pid).unwrap_or((0, 0));
+
+// NEW:
+let io_stats = io_stats_map.get(&pid).cloned().unwrap_or_else(|| ProcIoStats {
+    rchar: 0,
+    wchar: 0,
+    syscr: 0,
+    syscw: 0,
+    read_bytes: 0,
+    write_bytes: 0,
+    cancelled_write_bytes: 0,
+});
+
+// Populate extended metrics
+metrics.total_read_bytes = io_stats.rchar;
+metrics.total_write_bytes = io_stats.wchar;
+metrics.io_syscr = io_stats.syscr;
+metrics.io_syscw = io_stats.syscw;
+metrics.io_read_bytes = io_stats.read_bytes;
+metrics.io_write_bytes = io_stats.write_bytes;
+metrics.io_cancelled_write_bytes = io_stats.cancelled_write_bytes;
+```
+
+**Rationale**:
+- Batch processing: 1 IPC round-trip vs N round-trips (10-50x reduction for typical workloads)
+- Non-fatal failures: Missing helper → zero I/O stats (monitoring continues)
+- Debug logging per-PID errors: Aids troubleshooting without spamming logs
+
+#### 6.4 Update CSV Writing
+
+**File**: `src/play_launch/src/resource_monitor.rs` (~line 1183)
+
+**Changes**:
+- Add 5 new columns to CSV header
+- Write new fields to CSV rows
+
+**CSV Header** (example):
+```csv
+timestamp,cpu_usage,memory_rss,...,total_read_bytes,total_write_bytes,io_syscr,io_syscw,io_read_bytes,io_write_bytes,io_cancelled_write_bytes,...
+```
+
+**Backward Compatibility**: Existing columns unchanged, new columns appended
+
+#### 6.5 Remove Dead Code Suppressions
+
+**File**: `src/play_launch/src/io_helper_client.rs`
+
+**Changes**:
+- Remove all `#[allow(dead_code)]` attributes
+- Remove "Future Integration" TODO comments
+- Code is now actively used
+
+#### 6.6 Add Makefile Target for Capabilities
+
+**File**: `Makefile` (after build targets, ~line 116)
+
+**Add**:
+```makefile
+.PHONY: setcap-io-helper
+setcap-io-helper:
+	@echo "Setting CAP_SYS_PTRACE on I/O helper daemon..."
+	@if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then \
+		echo "Error: play_launch_io_helper not found. Run 'make build_play_launch' first."; \
+		exit 1; \
+	fi
+	sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
+	@echo "Verifying capability:"
+	@getcap install/play_launch/lib/play_launch/play_launch_io_helper
+	@echo "✓ I/O helper ready for privileged process monitoring"
+
+.PHONY: verify-io-helper
+verify-io-helper:
+	@echo "Checking I/O helper status..."
+	@if [ -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then \
+		echo "✓ Binary exists"; \
+		getcap install/play_launch/lib/play_launch/play_launch_io_helper || echo "⚠ CAP_SYS_PTRACE not set (run 'make setcap-io-helper')"; \
+	else \
+		echo "✗ Binary not found (run 'make build_play_launch')"; \
+	fi
+```
+
+**Update help text**:
+```makefile
+help:
+	@echo "..."
+	@echo "I/O Monitoring:"
+	@echo "  make setcap-io-helper       - Apply CAP_SYS_PTRACE to I/O helper (requires sudo)"
+	@echo "  make verify-io-helper       - Check I/O helper binary and capabilities"
+```
+
+**Note**: Capabilities must be reapplied after every rebuild (file modification clears capabilities)
+
+#### 6.7 Update Documentation
+
+**File**: `CLAUDE.md`
+
+**Changes**:
+
+1. **Build & Usage section** (~line 17):
+```markdown
+# Build workspace
+make build
+
+# Enable I/O monitoring for privileged processes (containers with capabilities)
+make setcap-io-helper    # Requires sudo, reapply after rebuild
+
+# Verify I/O helper status
+make verify-io-helper
+```
+
+2. **Platform Notes section** (~line 300):
+```markdown
+### I/O Monitoring
+
+**Standard processes**: Direct `/proc/[pid]/io` reads work without special permissions
+
+**Privileged processes** (containers, capabilities-enabled binaries): Require helper daemon
+- Helper binary: `play_launch_io_helper` (built with main package)
+- Capability required: `CAP_SYS_PTRACE` (set via `make setcap-io-helper`)
+- Architecture: Anonymous pipes for IPC, PR_SET_PDEATHSIG for cleanup
+- Batch processing: Single IPC call per monitoring interval (efficient)
+
+**Without helper/capabilities**:
+- Warning logged once: "I/O helper unavailable. Privileged processes will have zero I/O stats."
+- I/O fields show zeros for affected processes
+- Monitoring continues normally for other metrics
+
+**Extended I/O metrics** (7 fields from `/proc/[pid]/io`):
+- `rchar` / `wchar` - Total bytes read/written (includes cache)
+- `read_bytes` / `write_bytes` - Actual storage I/O (excludes cache)
+- `syscr` / `syscw` - Read/write syscall counts
+- `cancelled_write_bytes` - Writes later truncated
+
+**Reapply after rebuild**: File capabilities are cleared when binaries change
+```
+
+3. **Troubleshooting section** (new):
+```markdown
+### I/O Monitoring Troubleshooting
+
+**"I/O helper unavailable" warning**:
+1. Check binary exists: `ls install/play_launch/lib/play_launch/play_launch_io_helper`
+2. If missing: `make build_play_launch`
+3. Set capability: `make setcap-io-helper`
+4. Verify: `make verify-io-helper`
+
+**Zero I/O stats for containers**:
+- Likely missing CAP_SYS_PTRACE on helper
+- Run: `make setcap-io-helper`
+
+**"Permission denied" in helper logs**:
+- Check helper capability: `getcap install/play_launch/lib/play_launch/play_launch_io_helper`
+- Should show: `cap_sys_ptrace+ep`
+```
+
+### Testing Plan
+
+#### Unit Tests
+- [ ] IoHelperClient spawns successfully with valid binary
+- [ ] IoHelperClient handles missing binary gracefully (returns error)
+- [ ] IoHelperClient handles missing capability (warning logged)
+- [ ] Batch request with empty PID list returns empty results
+- [ ] Batch request with invalid PIDs returns errors per-PID
+- [ ] Helper cleanup on ResourceMonitor drop/thread exit
+
+#### Integration Tests
+- [ ] **Without setcap**:
+  - Build succeeds
+  - Warning logged about helper unavailable
+  - Monitoring continues, I/O stats all zeros
+  - No crashes or permission errors
+
+- [ ] **With setcap**:
+  - Helper spawns successfully
+  - I/O stats populated for regular processes
+  - I/O stats populated for privileged processes (containers)
+  - Batch processing: 1 helper call per monitoring interval
+  - All 7 I/O fields appear in CSV
+
+- [ ] **Helper crash mid-run**:
+  - Warning logged
+  - Falls back to zeros
+  - Monitoring continues
+
+- [ ] **Autoware test** (`make start-sim`):
+  - All containers monitored (15 containers in test)
+  - I/O stats present in all `node/*/metrics.csv` files
+  - Extended fields (syscr, syscw, etc.) populated
+  - No performance degradation vs direct reads
+
+#### Performance Tests
+- [ ] Batch processing vs single calls (expect 10-50x fewer IPC round-trips)
+- [ ] Overhead of Tokio runtime in monitoring thread (should be negligible)
+- [ ] Helper memory usage (should be minimal, <10MB)
+- [ ] Helper CPU usage (should be <1% during monitoring)
+
+#### CSV Validation
+- [ ] 5 new columns added to metrics.csv
+- [ ] Existing columns unchanged (backward compatible)
+- [ ] All I/O fields populated correctly
+- [ ] Plotting scripts handle new columns (or ignore gracefully)
+
+### Success Criteria
+- [ ] Helper binary built and installed by `make build_play_launch`
+- [ ] `make setcap-io-helper` target works
+- [ ] `make verify-io-helper` shows capability status
+- [ ] Helper spawns automatically with ResourceMonitor
+- [ ] Batch I/O reading functional (1 IPC call per interval)
+- [ ] All 7 I/O fields captured in CSV
+- [ ] Autoware test passes with I/O monitoring for all containers
+- [ ] Documentation updated (CLAUDE.md, inline comments)
+- [ ] Graceful degradation without helper/capabilities
+
+### Dependencies
+- ✅ IoHelperClient implementation (Phase 5.5 - complete)
+- ✅ Helper daemon binary (Phase 5.5 - complete)
+- ✅ IPC protocol (Phase 5.5 - complete)
+- ⏳ ResourceMonitor integration (this phase)
+- ⏳ Makefile targets (this phase)
+- ⏳ Documentation updates (this phase)
+
+### Risks and Mitigation
+**Risk**: Helper overhead impacts monitoring performance
+- **Mitigation**: Batch processing (already implemented in client)
+- **Validation**: Benchmark before/after
+
+**Risk**: Users forget to run `setcap` after rebuild
+- **Mitigation**:
+  - Clear warning when helper lacks capability
+  - `make verify-io-helper` for easy checking
+  - Documentation emphasizes reapplication requirement
+
+**Risk**: Extended CSV breaks existing plotting tools
+- **Mitigation**:
+  - New columns appended (existing columns unchanged)
+  - Test plotting scripts after integration
+  - Update plotting tools if needed (future work)
+
+**Risk**: Helper process orphaned on crash
+- **Mitigation**:
+  - PR_SET_PDEATHSIG (kernel-level guarantee)
+  - `kill_on_drop(true)` in IoHelperClient
+  - Manual testing of crash scenarios
+
+---
+
 ## Future Considerations
 
 ### Potential Additional Subcommands
