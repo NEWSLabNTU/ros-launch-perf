@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<launch>
+  <!-- I/O Stress Test: High-throughput disk and network I/O -->
+  <!-- Pipeline: /dev/urandom → talker → ROS topic → listener → /dev/null -->
+
+  <!-- Talker nodes: Read /dev/urandom and publish to /io_stress topic -->
+  <node pkg="io_stress" exec="talker" name="talker_1">
+    <param name="block_size" value="8192"/>
+  </node>
+
+  <node pkg="io_stress" exec="talker" name="talker_2">
+    <param name="block_size" value="8192"/>
+  </node>
+
+  <node pkg="io_stress" exec="talker" name="talker_3">
+    <param name="block_size" value="8192"/>
+  </node>
+
+  <node pkg="io_stress" exec="talker" name="talker_4">
+    <param name="block_size" value="8192"/>
+  </node>
+
+  <node pkg="io_stress" exec="talker" name="talker_5">
+    <param name="block_size" value="8192"/>
+  </node>
+
+  <!-- Listener nodes: Subscribe to /io_stress topic and write to /dev/null -->
+  <node pkg="io_stress" exec="listener" name="listener_1"/>
+
+  <node pkg="io_stress" exec="listener" name="listener_2"/>
+
+  <node pkg="io_stress" exec="listener" name="listener_3"/>
+
+  <node pkg="io_stress" exec="listener" name="listener_4"/>
+
+  <node pkg="io_stress" exec="listener" name="listener_5"/>
+</launch>
