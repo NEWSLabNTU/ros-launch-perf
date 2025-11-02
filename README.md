@@ -2,7 +2,7 @@
 
 A comprehensive toolkit for recording, replaying, and analyzing ROS 2 launch executions. Record any launch file once, then replay it multiple times for testing, performance analysis, and debugging.
 
-[![Watch the demo](demo.png)](demo.mp4)
+[![Watch the demo](assets/demo.png)](assets/demo.mp4)
 
 ## Features
 
