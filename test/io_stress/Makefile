@@ -12,7 +12,7 @@ run:
 
 plot:
 	@echo "Generating resource plots..."
-	@plot_play_launch
+	@play_launch plot
 
 clean:
 	@echo "Cleaning artifacts..."

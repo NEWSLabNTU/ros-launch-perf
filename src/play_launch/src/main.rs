@@ -9,6 +9,7 @@ mod io_helper_client;
 mod launch_dump;
 mod node_cmdline;
 mod options;
+mod plot_launcher;
 mod resource_monitor;
 
 use crate::{
@@ -186,6 +187,7 @@ fn get_verbose_flag(opts: &Options) -> bool {
         options::Command::Run(args) => args.common.verbose,
         options::Command::Dump(_) => false, // Dump doesn't use CommonOptions
         options::Command::Replay(args) => args.common.verbose,
+        options::Command::Plot(_) => false, // Plot doesn't use CommonOptions
     }
 }
 
@@ -234,6 +236,9 @@ fn main() -> eyre::Result<()> {
         }
         options::Command::Replay(args) => {
             handle_replay(args)?;
+        }
+        options::Command::Plot(args) => {
+            handle_plot(args)?;
         }
     }
 
@@ -607,6 +612,41 @@ fn handle_dump(args: &options::DumpArgs) -> eyre::Result<()> {
         "To replay: play_launch replay --input-file {}",
         args.output.display()
     );
+
+    Ok(())
+}
+
+/// Handle the 'plot' subcommand
+fn handle_plot(args: &options::PlotArgs) -> eyre::Result<()> {
+    use crate::plot_launcher::PlotLauncher;
+    use tokio::runtime::Runtime;
+
+    info!("Generating resource usage plots...");
+
+    // Create tokio runtime for async operations
+    let runtime = Runtime::new()?;
+
+    // Run plot phase
+    runtime.block_on(async {
+        let launcher = PlotLauncher::new()
+            .wrap_err("Failed to initialize plotting module. Ensure Python 3 is installed.")?;
+
+        launcher
+            .plot(
+                args.log_dir.as_deref(),
+                &args.base_log_dir,
+                args.output_dir.as_deref(),
+                &args.metrics,
+                args.list_metrics,
+            )
+            .await?;
+
+        Ok::<(), eyre::Report>(())
+    })?;
+
+    if !args.list_metrics {
+        info!("Plotting completed successfully");
+    }
 
     Ok(())
 }

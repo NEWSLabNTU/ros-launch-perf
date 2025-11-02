@@ -39,6 +39,13 @@ pub enum Command {
         play_launch replay\n  \
         play_launch replay --input-file autoware.json --enable-monitoring")]
     Replay(ReplayArgs),
+
+    /// Plot resource usage from execution logs
+    #[command(after_help = "Examples:\n  \
+        play_launch plot\n  \
+        play_launch plot --log-dir play_log/2025-10-28_16-17-56\n  \
+        play_launch plot --metrics cpu memory")]
+    Plot(PlotArgs),
 }
 
 /// Arguments for launching a launch file
@@ -148,4 +155,28 @@ pub struct CommonOptions {
     /// Disable automatic respawn even if configured in launch file
     #[arg(long)]
     pub disable_respawn: bool,
+}
+
+/// Arguments for plot command
+#[derive(Args)]
+pub struct PlotArgs {
+    /// Specific log directory to plot (e.g., play_log/2025-10-28_16-17-56)
+    #[arg(long, value_name = "PATH")]
+    pub log_dir: Option<PathBuf>,
+
+    /// Base log directory to search for latest execution
+    #[arg(long, value_name = "PATH", default_value = "./play_log")]
+    pub base_log_dir: PathBuf,
+
+    /// Output directory for generated plots
+    #[arg(long, short = 'o', value_name = "PATH")]
+    pub output_dir: Option<PathBuf>,
+
+    /// Metrics to plot (can be specified multiple times)
+    #[arg(long, short = 'm', value_name = "METRIC")]
+    pub metrics: Vec<String>,
+
+    /// List available metrics and exit
+    #[arg(long)]
+    pub list_metrics: bool,
 }

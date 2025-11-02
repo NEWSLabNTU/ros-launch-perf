@@ -116,7 +116,7 @@ start-sim-and-drive: check-autoware
 .PHONY: plot
 plot:
 	@echo "Generating resource usage plots from latest play_log..."
-	@plot_play_launch
+	@play_launch plot
 
 .PHONY: kill-orphans
 kill-orphans:

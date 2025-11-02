@@ -182,16 +182,16 @@ Generate comprehensive interactive plots and statistics from monitoring data:
 
 ```bash
 # Plot latest execution
-plot_play_launch
+play_launch plot
 
 # Plot specific log directory
-plot_play_launch --log-dir play_log/2025-10-28_16-17-56
+play_launch plot --log-dir play_log/2025-10-28_16-17-56
 
 # Plot only CPU and memory
-plot_play_launch --metrics cpu memory
+play_launch plot --metrics cpu memory
 
 # List available metrics
-plot_play_launch --list-metrics
+play_launch plot --list-metrics
 ```
 
 ### Generated Output
@@ -257,7 +257,7 @@ play_launch replay --config config.yaml
 play_launch replay --verbose
 
 # Plot results
-plot_play_launch [--log-dir <dir>] [--metrics cpu memory io gpu]
+play_launch plot [--log-dir <dir>] [--metrics cpu memory io gpu]
 ```
 
 

@@ -21,9 +21,4 @@ setup(
     description="Analysis and visualization tools for play_launch execution logs",
     license="MIT",
     tests_require=["pytest"],
-    entry_points={
-        "console_scripts": [
-            "plot_play_launch = play_launch_analyzer:main",
-        ],
-    },
 )

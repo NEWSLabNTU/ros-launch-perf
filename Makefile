@@ -39,7 +39,7 @@ help:
 	@echo "  Source workspace:   . install/setup.bash"
 	@echo "  Run dump_launch:    ros2 run dump_launch dump_launch <package> <launch_file> [args...]"
 	@echo "  Run play_launch:    play_launch [options]"
-	@echo "  Plot resources:     plot_play_launch [--log-dir <dir>]"
+	@echo "  Plot resources:     play_launch plot [--log-dir <dir>]"
 	@echo ""
 
 .PHONY: install-deps

@@ -18,34 +18,34 @@ source install/setup.bash
 
 ## Usage
 
-### plot_play_launch
+### play_launch plot
 
 Generate resource usage plots from play_launch logs:
 
 ```bash
 # Plot all metrics from latest log in ./play_log
-plot_play_launch
+play_launch plot
 
 # List available metrics in a log
-plot_play_launch --log-dir play_log/2025-10-28_16-17-56 --list-metrics
+play_launch plot --log-dir play_log/2025-10-28_16-17-56 --list-metrics
 
 # Plot specific metrics only
-plot_play_launch --metrics cpu memory
-plot_play_launch --metrics io
-plot_play_launch --metrics gpu
+play_launch plot --metrics cpu memory
+play_launch plot --metrics io
+play_launch plot --metrics gpu
 
 # Plot from specific log directory (absolute or relative)
-plot_play_launch --log-dir /path/to/play_log/2025-10-28_16-17-56
-plot_play_launch --log-dir ../other/play_log/2025-10-28_16-17-56
+play_launch plot --log-dir /path/to/play_log/2025-10-28_16-17-56
+play_launch plot --log-dir ../other/play_log/2025-10-28_16-17-56
 
 # Specify custom base log directory
-plot_play_launch --base-log-dir /path/to/logs
+play_launch plot --base-log-dir /path/to/logs
 
 # Specify output directory for plots
-plot_play_launch --output-dir /path/to/output
+play_launch plot --output-dir /path/to/output
 
 # Combine options
-plot_play_launch --log-dir ./play_log/latest --metrics cpu memory io --output-dir ./analysis
+play_launch plot --log-dir ./play_log/latest --metrics cpu memory io --output-dir ./analysis
 ```
 
 ### Command Options
