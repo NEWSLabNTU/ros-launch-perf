@@ -5,12 +5,6 @@
 //! set (which clears their dumpable flag).
 //!
 //! Communication uses anonymous pipes (no filesystem sockets).
-//!
-//! # Future Integration
-//!
-//! This module will be integrated with ResourceMonitor to enable I/O monitoring
-//! for privileged processes (containers and nodes with capabilities set).
-//! Currently unused until ResourceMonitor integration is implemented.
 
 use eyre::{Context, Result};
 use play_launch::ipc::{
@@ -29,16 +23,12 @@ use tokio::{
 use tracing::{debug, info, warn};
 
 /// Client for communicating with the I/O helper daemon
-///
-/// TODO: Integrate with ResourceMonitor for I/O monitoring of privileged processes
-#[allow(dead_code)]
 pub struct IoHelperClient {
     request_writer: tokio::fs::File,  // Parent writes requests here
     response_reader: tokio::fs::File, // Parent reads responses here
     child: Option<Child>,
 }
 
-#[allow(dead_code)]
 impl IoHelperClient {
     /// Spawn the helper daemon and connect via pipes
     ///
@@ -124,6 +114,7 @@ impl IoHelperClient {
     }
 
     /// Read /proc/[pid]/io stats for a single PID
+    #[allow(dead_code)] // Used by external API consumers, not within play_launch binary
     pub async fn read_proc_io(&mut self, pid: u32) -> Result<(u64, u64), ProcIoError> {
         let request = Request::ReadProcIo { pid };
         let response = self
@@ -205,6 +196,7 @@ impl IoHelperClient {
     }
 
     /// Gracefully shutdown the helper
+    #[allow(dead_code)] // Used for explicit cleanup, automatic cleanup via Drop also available
     pub async fn shutdown(mut self) -> Result<()> {
         // Send shutdown request
         debug!("Sending shutdown request to helper");
@@ -248,9 +240,6 @@ impl Drop for IoHelperClient {
 }
 
 /// Find the helper binary (same directory as current executable)
-///
-/// TODO: Used by IoHelperClient::spawn() for ResourceMonitor integration
-#[allow(dead_code)]
 fn find_helper_binary() -> Result<PathBuf> {
     let exe_path = std::env::current_exe().wrap_err("Failed to get current executable path")?;
 
@@ -276,9 +265,6 @@ fn find_helper_binary() -> Result<PathBuf> {
 }
 
 /// Check if helper binary has required capabilities
-///
-/// TODO: Used by find_helper_binary() to verify CAP_SYS_PTRACE is set
-#[allow(dead_code)]
 fn check_helper_capabilities(path: &Path) -> Result<()> {
     let output = std::process::Command::new("getcap").arg(path).output();
 
@@ -312,9 +298,6 @@ fn check_helper_capabilities(path: &Path) -> Result<()> {
 /// Create an anonymous pipe
 ///
 /// Returns (read_fd, write_fd)
-///
-/// TODO: Used by IoHelperClient::spawn() to create IPC pipes
-#[allow(dead_code)]
 fn create_pipe() -> Result<(std::os::unix::io::RawFd, std::os::unix::io::RawFd)> {
     let mut fds = [0i32; 2];
 

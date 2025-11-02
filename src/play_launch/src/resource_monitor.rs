@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sysinfo::{Networks, Pid, System};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
 type GpuMetricsTuple = (
@@ -47,6 +47,13 @@ pub struct ResourceMetrics {
     // Total I/O metrics (all I/O including network - from /proc/[pid]/io)
     pub total_read_bytes: u64,  // rchar field
     pub total_write_bytes: u64, // wchar field
+
+    // Extended I/O metrics (from /proc/[pid]/io via helper daemon)
+    pub io_syscr: u64,                 // Read syscalls count
+    pub io_syscw: u64,                 // Write syscalls count
+    pub io_storage_read_bytes: u64,    // Actual bytes read from storage (excludes cache)
+    pub io_storage_write_bytes: u64,   // Actual bytes written to storage (excludes cache)
+    pub io_cancelled_write_bytes: u64, // Write bytes later truncated
 
     // I/O rates (bytes per second, calculated from previous sample)
     pub total_read_rate_bps: Option<f64>,
@@ -170,7 +177,12 @@ pub struct ResourceMonitor {
     gpu_device_count: u32,
     previous_samples: HashMap<u32, PreviousSample>, // PID -> previous I/O sample
     previous_system_sample: Option<PreviousSystemSample>, // Previous system sample for rate calculation
-    proc_io_warned: bool, // Track if we've warned about /proc/io unavailability
+
+    // I/O helper daemon for reading /proc/[pid]/io with CAP_SYS_PTRACE
+    io_helper: Option<crate::io_helper_client::IoHelperClient>,
+    tokio_runtime: Option<tokio::runtime::Runtime>, // Runtime for async helper calls
+    io_helper_unavailable: bool,                    // Track if helper failed to spawn (warn once)
+    io_stats_cache: std::collections::HashMap<u32, play_launch::ipc::ProcIoStats>, // Cache for batch I/O reads
 }
 
 /// Count network connections from /proc/<pid>/net/{tcp,udp} files
@@ -270,6 +282,28 @@ impl ResourceMonitor {
         let mut system = System::new();
         system.refresh_cpu_all(); // Initial CPU refresh to establish baseline
 
+        // Try to spawn I/O helper daemon (non-fatal if unavailable)
+        let (io_helper, tokio_runtime, io_helper_unavailable) = match tokio::runtime::Runtime::new()
+        {
+            Ok(rt) => match rt.block_on(crate::io_helper_client::IoHelperClient::spawn()) {
+                Ok(client) => {
+                    info!("I/O helper spawned successfully");
+                    (Some(client), Some(rt), false)
+                }
+                Err(e) => {
+                    warn!(
+                        "I/O helper unavailable: {}. Privileged processes will have zero I/O stats.",
+                        e
+                    );
+                    (None, None, true)
+                }
+            },
+            Err(e) => {
+                warn!("Failed to create Tokio runtime for I/O helper: {}", e);
+                (None, None, true)
+            }
+        };
+
         Ok(Self {
             system,
             networks: Networks::new_with_refreshed_list(),
@@ -279,7 +313,10 @@ impl ResourceMonitor {
             gpu_device_count,
             previous_samples: HashMap::new(),
             previous_system_sample: None,
-            proc_io_warned: false,
+            io_helper,
+            tokio_runtime,
+            io_helper_unavailable,
+            io_stats_cache: HashMap::new(),
         })
     }
 
@@ -359,8 +396,27 @@ impl ResourceMonitor {
         // Collect network connection counts
         let (tcp_connections, udp_connections) = self.collect_network_connections(pid);
 
-        // Parse /proc/[pid]/io for total I/O (including network)
-        let (total_read_bytes, total_write_bytes) = self.parse_proc_io(pid).unwrap_or((0, 0));
+        // Get I/O stats from cache (populated by batch read in monitoring loop)
+        let io_stats = self.io_stats_cache.get(&pid).cloned().unwrap_or({
+            play_launch::ipc::ProcIoStats {
+                rchar: 0,
+                wchar: 0,
+                syscr: 0,
+                syscw: 0,
+                read_bytes: 0,
+                write_bytes: 0,
+                cancelled_write_bytes: 0,
+            }
+        });
+
+        // Extract all I/O fields
+        let total_read_bytes = io_stats.rchar;
+        let total_write_bytes = io_stats.wchar;
+        let io_syscr = io_stats.syscr;
+        let io_syscw = io_stats.syscw;
+        let io_storage_read_bytes = io_stats.read_bytes;
+        let io_storage_write_bytes = io_stats.write_bytes;
+        let io_cancelled_write_bytes = io_stats.cancelled_write_bytes;
 
         // Calculate I/O rates and CPU percentage from previous sample
         let current_time = SystemTime::now();
@@ -425,6 +481,11 @@ impl ResourceMonitor {
             io_write_bytes,
             total_read_bytes,
             total_write_bytes,
+            io_syscr,
+            io_syscw,
+            io_storage_read_bytes,
+            io_storage_write_bytes,
+            io_cancelled_write_bytes,
             total_read_rate_bps,
             total_write_rate_bps,
             state,
@@ -649,53 +710,6 @@ impl ResourceMonitor {
         (0, 0)
     }
 
-    /// Parse /proc/[pid]/io for total I/O bytes (rchar/wchar) including network
-    /// Returns (rchar, wchar) which are cumulative byte counters
-    #[cfg(target_os = "linux")]
-    fn parse_proc_io(&mut self, pid: u32) -> Result<(u64, u64)> {
-        let io_path = format!("/proc/{}/io", pid);
-
-        match std::fs::read_to_string(&io_path) {
-            Ok(content) => {
-                let mut rchar = 0u64;
-                let mut wchar = 0u64;
-
-                for line in content.lines() {
-                    let parts: Vec<&str> = line.split(':').collect();
-                    if parts.len() != 2 {
-                        continue;
-                    }
-
-                    let key = parts[0].trim();
-                    let value = parts[1].trim().parse::<u64>().unwrap_or(0);
-
-                    match key {
-                        "rchar" => rchar = value,
-                        "wchar" => wchar = value,
-                        _ => {}
-                    }
-                }
-
-                Ok((rchar, wchar))
-            }
-            Err(e) => {
-                // Warn once if /proc/[pid]/io is not available (common on some systems like Jetson/Tegra)
-                if !self.proc_io_warned {
-                    warn!(
-                        "Per-process I/O metrics not available: {}. \
-                         This is common on some Linux systems (e.g., Jetson/Tegra) where /proc/[pid]/io is not exposed. \
-                         Per-process total_read_bytes, total_write_bytes, and I/O rates will be zero. \
-                         System-wide I/O monitoring will continue to work normally.",
-                        e
-                    );
-                    self.proc_io_warned = true;
-                }
-                // Return zeros - not a fatal error
-                Ok((0, 0))
-            }
-        }
-    }
-
     /// Parse /proc/[pid]/stat for CPU times (utime and stime)
     /// Returns (utime, stime) in clock ticks
     /// These values are cumulative and need to be differenced between samples
@@ -738,11 +752,6 @@ impl ResourceMonitor {
     #[cfg(not(target_os = "linux"))]
     fn parse_proc_stat(&self, _pid: u32) -> Result<(u64, u64)> {
         // CPU time parsing not implemented for non-Linux platforms
-        Ok((0, 0))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    fn parse_proc_io(&mut self, _pid: u32) -> Result<(u64, u64)> {
         Ok((0, 0))
     }
 
@@ -825,6 +834,11 @@ impl ResourceMonitor {
                     "io_write_bytes",
                     "total_read_bytes",
                     "total_write_bytes",
+                    "io_syscr",
+                    "io_syscw",
+                    "io_storage_read_bytes",
+                    "io_storage_write_bytes",
+                    "io_cancelled_write_bytes",
                     "total_read_rate_bps",
                     "total_write_rate_bps",
                     "state",
@@ -868,6 +882,11 @@ impl ResourceMonitor {
                 metrics.io_write_bytes.to_string(),
                 metrics.total_read_bytes.to_string(),
                 metrics.total_write_bytes.to_string(),
+                metrics.io_syscr.to_string(),
+                metrics.io_syscw.to_string(),
+                metrics.io_storage_read_bytes.to_string(),
+                metrics.io_storage_write_bytes.to_string(),
+                metrics.io_cancelled_write_bytes.to_string(),
                 metrics
                     .total_read_rate_bps
                     .map(|v| format!("{:.2}", v))
@@ -1174,6 +1193,47 @@ pub fn spawn_monitor_thread(
                         .with_disk_usage()
                         .with_memory(),
                 );
+            }
+
+            // Batch read I/O stats for all PIDs (single IPC call to helper)
+            monitor.io_stats_cache.clear();
+            if let (Some(ref mut helper), Some(ref rt)) =
+                (&mut monitor.io_helper, &monitor.tokio_runtime)
+            {
+                // Collect all PIDs
+                let pids: Vec<u32> = processes.keys().copied().collect();
+
+                if !pids.is_empty() {
+                    // Single batch request to helper
+                    match rt.block_on(helper.read_proc_io_batch(&pids)) {
+                        Ok(results) => {
+                            for result in results {
+                                match result.result {
+                                    Ok(stats) => {
+                                        monitor.io_stats_cache.insert(result.pid, stats);
+                                    }
+                                    Err(e) => {
+                                        debug!("I/O read failed for PID {}: {:?}", result.pid, e);
+                                    }
+                                }
+                            }
+                            debug!(
+                                "Batch I/O read: {}/{} PIDs successful",
+                                monitor.io_stats_cache.len(),
+                                pids.len()
+                            );
+                        }
+                        Err(e) => {
+                            if !monitor.io_helper_unavailable {
+                                warn!(
+                                    "I/O helper batch request failed: {}. I/O stats will be zero.",
+                                    e
+                                );
+                                monitor.io_helper_unavailable = true;
+                            }
+                        }
+                    }
+                }
             }
 
             for (pid, output_dir) in processes {
