@@ -16,6 +16,12 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch file executions f
 # Build workspace (3-stage colcon build)
 make build
 
+# Enable I/O monitoring for privileged processes (containers with capabilities)
+make setcap-io-helper    # Requires sudo, reapply after rebuild
+
+# Verify I/O helper status
+make verify-io-helper
+
 # Source workspace
 . install/setup.bash
 
@@ -160,8 +166,49 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 
 ### Platform Notes
 - **CPU metrics**: Accurate per-process measurement via `/proc/[pid]/stat` (utime + stime). Correctly shows individual process CPU usage independent of system loading.
-- **I/O metrics**: `/proc/[pid]/io` unavailable on Jetson/Tegra (warning logged once, system-wide I/O still works)
+- **I/O metrics**: See dedicated I/O Monitoring section below
 - **Negative nice values**: Requires `sudo setcap cap_sys_nice+ep install/play_launch/lib/play_launch/play_launch` (reapply after rebuild)
+
+### I/O Monitoring
+
+**Standard processes**: Direct `/proc/[pid]/io` reads work without special permissions
+
+**Privileged processes** (containers, capabilities-enabled binaries): Require helper daemon
+- Helper binary: `play_launch_io_helper` (built with main package)
+- Capability required: `CAP_SYS_PTRACE` (set via `make setcap-io-helper`)
+- Architecture: Anonymous pipes for IPC, PR_SET_PDEATHSIG for cleanup
+- Batch processing: Single IPC call per monitoring interval (efficient)
+
+**Without helper/capabilities**:
+- Warning logged once: "I/O helper unavailable. Privileged processes will have zero I/O stats."
+- I/O fields show zeros for affected processes
+- Monitoring continues normally for other metrics
+
+**Extended I/O metrics** (7 fields from `/proc/[pid]/io`):
+- `rchar` / `wchar` - Total bytes read/written (includes cache)
+- `read_bytes` / `write_bytes` - Actual storage I/O (excludes cache)
+- `syscr` / `syscw` - Read/write syscall counts
+- `cancelled_write_bytes` - Writes later truncated
+
+**Reapply after rebuild**: File capabilities are cleared when binaries change
+
+**Jetson/Tegra note**: `/proc/[pid]/io` not available (hardware limitation). System-wide I/O monitoring still works.
+
+### I/O Monitoring Troubleshooting
+
+**"I/O helper unavailable" warning**:
+1. Check binary exists: `ls install/play_launch/lib/play_launch/play_launch_io_helper`
+2. If missing: `make build_play_launch`
+3. Set capability: `make setcap-io-helper`
+4. Verify: `make verify-io-helper`
+
+**Zero I/O stats for containers**:
+- Likely missing CAP_SYS_PTRACE on helper
+- Run: `make setcap-io-helper`
+
+**"Permission denied" in helper logs**:
+- Check helper capability: `getcap install/play_launch/lib/play_launch/play_launch_io_helper`
+- Should show: `cap_sys_ptrace+ep`
 
 ## Important Implementation Details
 
@@ -196,7 +243,7 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 
 ## Dependencies
 
-**Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv
+**Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, bincode, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv
 
 **Python**: ruamel-yaml, pyyaml, lark, packaging, hatchling, pytest, ruff
 
