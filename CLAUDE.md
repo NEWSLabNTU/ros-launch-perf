@@ -32,8 +32,8 @@ play_launch dump launch <package> <launch_file> # Record only
 play_launch replay --config config.yaml         # Replay with config
 
 # Analysis
-plot_play_launch                                # Plot latest logs
-plot_play_launch --metrics cpu memory           # Plot specific metrics
+play_launch plot                                # Plot latest logs
+play_launch plot --metrics cpu memory           # Plot specific metrics
 ```
 
 ## Architecture
@@ -125,7 +125,7 @@ play_log/YYYY-MM-DD_HH-MM-SS/
 - ✅ **Phase 3.1 Complete**: Interactive Plotly dashboard with zoom/pan/hover tooltips
 
 ### Visualization
-The `plot_play_launch` command generates individual interactive HTML charts using Plotly:
+The `play_launch plot` command generates individual interactive HTML charts using Plotly:
 
 **Timeline Charts** (~4-5 MB each, shows metrics over time):
 - `cpu_timeline.html` - CPU usage with container-aware hover panel
