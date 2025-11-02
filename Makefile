@@ -22,6 +22,10 @@ help:
 	@echo "  make build_play_launch      - Build play_launch Rust package only"
 	@echo "  make build_tools            - Build analysis tools and wrappers only"
 	@echo ""
+	@echo "I/O Monitoring:"
+	@echo "  make setcap-io-helper       - Apply CAP_SYS_PTRACE to I/O helper (requires sudo)"
+	@echo "  make verify-io-helper       - Check I/O helper binary and capabilities"
+	@echo ""
 	@echo "Development:"
 	@echo "  make clean                  - Clean all build artifacts"
 	@echo "  make test                   - Run all tests"
@@ -114,6 +118,30 @@ build_tools:
 	@mkdir -p $(LOG_DIR)
 	@. install/setup.sh && \
 	colcon build $(COLCON_BUILD_FLAGS) --base-paths src/play_launch_wrapper src/play_launch_analyzer 2>&1 | tee $(LOG_DIR)/tools.log
+
+.PHONY: setcap-io-helper
+setcap-io-helper:
+	@echo "Setting CAP_SYS_PTRACE on I/O helper daemon..."
+	@if [ ! -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then \
+		echo "Error: play_launch_io_helper not found. Run 'make build_play_launch' first."; \
+		exit 1; \
+	fi
+	sudo setcap cap_sys_ptrace+ep install/play_launch/lib/play_launch/play_launch_io_helper
+	@echo "Verifying capability:"
+	@getcap install/play_launch/lib/play_launch/play_launch_io_helper
+	@echo "✓ I/O helper ready for privileged process monitoring"
+	@echo ""
+	@echo "Note: Capabilities must be reapplied after every rebuild."
+
+.PHONY: verify-io-helper
+verify-io-helper:
+	@echo "Checking I/O helper status..."
+	@if [ -f install/play_launch/lib/play_launch/play_launch_io_helper ]; then \
+		echo "✓ Binary exists"; \
+		getcap install/play_launch/lib/play_launch/play_launch_io_helper || echo "⚠ CAP_SYS_PTRACE not set (run 'make setcap-io-helper')"; \
+	else \
+		echo "✗ Binary not found (run 'make build_play_launch')"; \
+	fi
 
 .PHONY: clean
 clean:
