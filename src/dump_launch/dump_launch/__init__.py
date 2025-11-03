@@ -48,9 +48,8 @@ def main() -> int:
 
     output_file = args.output
 
-    inspector = LaunchInspector(
-        argv=launch_arguments, noninteractive=True, debug=args.debug
-    )
+    # argv should be empty - launch_arguments are passed separately to IncludeLaunchDescription
+    inspector = LaunchInspector(argv=[], noninteractive=True, debug=args.debug)
 
     parsed_args = parse_launch_arguments(launch_arguments)
     launch_description = LaunchDescription(

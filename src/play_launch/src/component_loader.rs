@@ -124,9 +124,12 @@ pub fn start_component_loader_thread() -> Result<ComponentLoaderHandle> {
 fn run_component_loader_loop(mut request_rx: mpsc::UnboundedReceiver<LoadRequest>) -> Result<()> {
     use rclrs::CreateBasicExecutor;
 
-    // Initialize ROS context and node
-    let context = rclrs::Context::new(std::env::args(), rclrs::InitOptions::default())
-        .context("Failed to create ROS context")?;
+    // Initialize ROS context and node (use empty args to avoid deprecation warnings)
+    let context = rclrs::Context::new(
+        vec!["play_launch".to_string()],
+        rclrs::InitOptions::default(),
+    )
+    .context("Failed to create ROS context")?;
 
     let mut executor = context.create_basic_executor();
     let node = executor

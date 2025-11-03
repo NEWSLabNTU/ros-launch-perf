@@ -133,8 +133,11 @@ fn run_ros_discovery_loop(
 
     debug!("Starting ROS container discovery thread");
 
-    // Initialize ROS context and node
-    let context = rclrs::Context::new(std::env::args(), rclrs::InitOptions::default())?;
+    // Initialize ROS context and node (use empty args to avoid deprecation warnings)
+    let context = rclrs::Context::new(
+        vec!["play_launch".to_string()],
+        rclrs::InitOptions::default(),
+    )?;
     let executor = context.create_basic_executor();
     let node = executor.create_node("play_launch_container_discovery")?;
 
