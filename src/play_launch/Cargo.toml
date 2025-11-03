@@ -50,3 +50,8 @@ which = "6.0"
 
 [build-dependencies]
 pkg-config = "0.3"
+
+# Release profile optimization for smaller binary size
+[profile.release]
+strip = true        # Strip debug symbols (reduces binary size by ~50-60%)
+lto = "thin"        # Thin link-time optimization (balance between speed and size)
