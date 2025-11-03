@@ -14,13 +14,13 @@ ROS2 Launch Inspection Tool - Records and replays ROS 2 launch file executions f
 
 ```sh
 # Build workspace (3-stage colcon build)
-make build
+just build
 
 # Enable I/O monitoring for privileged processes (containers with capabilities)
-make setcap-io-helper    # Requires sudo, reapply after rebuild
+just setcap-io-helper    # Requires sudo, reapply after rebuild
 
 # Verify I/O helper status
-make verify-io-helper
+just verify-io-helper
 
 # Source workspace
 . install/setup.bash
@@ -175,7 +175,7 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 
 **Privileged processes** (containers, capabilities-enabled binaries): Require helper daemon
 - Helper binary: `play_launch_io_helper` (built with main package)
-- Capability required: `CAP_SYS_PTRACE` (set via `make setcap-io-helper`)
+- Capability required: `CAP_SYS_PTRACE` (set via `just setcap-io-helper`)
 - Architecture: Anonymous pipes for IPC, PR_SET_PDEATHSIG for cleanup
 - Batch processing: Single IPC call per monitoring interval (efficient)
 
@@ -198,13 +198,13 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 
 **"I/O helper unavailable" warning**:
 1. Check binary exists: `ls install/play_launch/lib/play_launch/play_launch_io_helper`
-2. If missing: `make build_play_launch`
-3. Set capability: `make setcap-io-helper`
-4. Verify: `make verify-io-helper`
+2. If missing: `just build-play-launch`
+3. Set capability: `just setcap-io-helper`
+4. Verify: `just verify-io-helper`
 
 **Zero I/O stats for containers**:
 - Likely missing CAP_SYS_PTRACE on helper
-- Run: `make setcap-io-helper`
+- Run: `just setcap-io-helper`
 
 **"Permission denied" in helper logs**:
 - Check helper capability: `getcap install/play_launch/lib/play_launch/play_launch_io_helper`
@@ -250,13 +250,15 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 ## Testing
 
 Autoware planning simulator integration test in `test/autoware_planning_simulation/`:
-- `make start-sim`: Start simulator with play_launch
-- `make drive`: Run autonomous driving test
-- `make plot`: Generate resource plots
+- `just start-sim`: Start simulator with play_launch
+- `just drive`: Run autonomous driving test
+- `just plot`: Generate resource plots
 - Tested with 52 composable nodes, 15 containers
 
 ## Key Recent Fixes
 
+- **2025-11-03**: Distribution via Pacstall - Created complete pacscript for source-based package installation. Binary size optimized 94% (137MB → 8.7MB) via release profile with strip+LTO. Pacscript handles 3-stage build, dependencies, and multi-arch support automatically. See docs/DISTRIBUTION_PLAN.md for phased rollout strategy.
+- **2025-11-03**: Binary optimization - Added Cargo.toml release profile (strip=true, lto="thin") and Makefile --cargo-args --release flag. Reduced play_launch from 109MB to 6.5MB, play_launch_io_helper from 28MB to 2.2MB (94% total reduction).
 - **2025-11-03**: Fixed ROS deprecation warnings - replaced ruamel.yaml with standard PyYAML in dump_launch (utils.py). Changed LaunchInspector argv to empty list since launch arguments are passed separately via launch_arguments parameter (__init__.py).
 - **2025-11-03**: Fixed "Found remap rule" warnings during replay - changed ROS context initialization in component_loader.rs and container_readiness.rs to use minimal args vector instead of std::env::args(). Launch arguments (e.g., start_rviz:=true) are not ROS node arguments and should not be passed to rclrs::Context::new().
 - **2025-10-30**: Fixed respawn race condition - replaced `tokio::sync::Notify` with `tokio::sync::watch` channel for persistent shutdown state. Respawning nodes (like RViz) now stop immediately on Ctrl-C without spurious restarts. Watch channel provides both immediate `.borrow()` checks and awaitable `.changed()` notifications.

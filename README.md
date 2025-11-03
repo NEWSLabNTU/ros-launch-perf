@@ -37,7 +37,7 @@ cd ros-launch-perf
 
 2. Install all dependencies:
 ```bash
-make install-deps
+just install-deps
 ```
 
 This will:
@@ -48,7 +48,7 @@ This will:
 
 3. Build the project:
 ```bash
-make build
+just build
 ```
 
 4. Source the workspace:
@@ -268,7 +268,7 @@ play_launch plot [--log-dir <dir>] [--metrics cpu memory io gpu]
 Lint both Python and Rust code:
 
 ```sh
-make lint
+just lint
 ```
 
 ### Formatting
@@ -276,7 +276,7 @@ make lint
 Format both Python and Rust code:
 
 ```sh
-make format
+just format
 ```
 
 ### Testing
@@ -284,7 +284,7 @@ make format
 Run the full test suite (both Python and Rust):
 
 ```sh
-make test
+just test
 ```
 
 
