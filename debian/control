@@ -1,0 +1,25 @@
+Source: play-launch
+Section: devel
+Priority: optional
+Maintainer: Jerry Lin <jerry73204@gmail.com>
+Build-Depends: debhelper (>= 10),
+               git,
+               curl,
+               build-essential,
+               cmake,
+               pkg-config,
+               python3-pip,
+               python3-dev,
+               ros-humble-desktop,
+               just
+Standards-Version: 4.5.0
+Homepage: https://github.com/NEWSLabNTU/ros-launch-perf
+
+Package: play-launch
+Architecture: any
+Depends: ros-humble-desktop
+Recommends: nvidia-utils
+Description: ROS 2 launch inspection tool with resource monitoring
+ Records and replays ROS 2 launch file executions for performance analysis.
+ Features per-node resource monitoring (CPU, memory, I/O, network, GPU),
+ interactive visualizations, and component container support.

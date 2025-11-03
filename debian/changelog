@@ -1,0 +1,8 @@
+play-launch (0.1.0-1) unstable; urgency=medium
+
+  * Initial release
+  * ROS 2 launch inspection tool with resource monitoring
+  * Optimized binaries (8.7MB total)
+  * Multi-architecture support (x86_64, arm64)
+
+ -- Jerry Lin <jerry73204@gmail.com>  Mon, 04 Nov 2025 04:00:00 +0000

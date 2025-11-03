@@ -82,6 +82,10 @@ verify-io-helper:
 clean:
     rm -rf build install log .cargo {{log_dir}}
 
+# Build Debian package
+build-deb:
+    ./scripts/build-deb.sh
+
 # Run all tests
 test:
     . install/setup.sh && colcon test --packages-select dump_launch play_launch && colcon test-result --all --verbose

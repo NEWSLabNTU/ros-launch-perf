@@ -1,0 +1,12 @@
+Package: play-launch
+Version: VERSION_PLACEHOLDER
+Section: devel
+Priority: optional
+Architecture: ARCH_PLACEHOLDER
+Depends: ros-humble-desktop
+Recommends: nvidia-utils
+Maintainer: Jerry Lin <jerry73204@gmail.com>
+Description: ROS 2 launch inspection tool with resource monitoring
+ Records and replays ROS 2 launch file executions for performance analysis.
+ Features per-node resource monitoring (CPU, memory, I/O, network, GPU),
+ interactive visualizations, and component container support.

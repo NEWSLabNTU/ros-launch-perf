@@ -1,0 +1,71 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE = 1
+export HOME = $(CURDIR)/debian/home
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	# Install Rust if needed
+	if ! command -v rustc >/dev/null 2>&1; then \
+		mkdir -p $(HOME)/.cargo; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path; \
+	fi
+	export PATH="$(HOME)/.cargo/bin:$$PATH"; \
+	# Install Python dependencies
+	pip3 install --user --upgrade \
+		git+https://github.com/colcon/colcon-cargo.git \
+		git+https://github.com/colcon/colcon-ros-cargo.git \
+		pyyaml lark packaging plotly pandas
+	# Install cargo-ament-build
+	export PATH="$(HOME)/.cargo/bin:$$PATH"; \
+	command -v cargo-ament-build >/dev/null 2>&1 || $(HOME)/.cargo/bin/cargo install cargo-ament-build
+
+override_dh_auto_build:
+	export PATH="$(HOME)/.cargo/bin:$(HOME)/.local/bin:$$PATH"; \
+	export PYTHONPATH="$(HOME)/.local/lib/python3.10/site-packages:$$PYTHONPATH"; \
+	git submodule update --init --recursive; \
+	just build
+
+override_dh_auto_install:
+	# Install binaries
+	install -Dm755 install/play_launch/lib/play_launch/play_launch \
+		debian/play-launch/usr/bin/play_launch
+	install -Dm755 install/play_launch/lib/play_launch/play_launch_io_helper \
+		debian/play-launch/usr/lib/play-launch/play_launch_io_helper
+	# Install Python packages
+	if [ -d install/dump_launch/lib/python3.10/site-packages/dump_launch ]; then \
+		mkdir -p debian/play-launch/usr/lib/python3.10/dist-packages; \
+		cp -r install/dump_launch/lib/python3.10/site-packages/dump_launch \
+			debian/play-launch/usr/lib/python3.10/dist-packages/; \
+	fi
+	if [ -d install/play_launch_analyzer/lib/python3.10/site-packages/play_launch_analyzer ]; then \
+		mkdir -p debian/play-launch/usr/lib/python3.10/dist-packages; \
+		cp -r install/play_launch_analyzer/lib/python3.10/site-packages/play_launch_analyzer \
+			debian/play-launch/usr/lib/python3.10/dist-packages/; \
+	fi
+	# Install Python scripts
+	if [ -f install/dump_launch/lib/dump_launch/dump_launch ]; then \
+		install -Dm755 install/dump_launch/lib/dump_launch/dump_launch \
+			debian/play-launch/usr/bin/dump_launch; \
+	fi
+	if [ -f install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer ]; then \
+		install -Dm755 install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer \
+			debian/play-launch/usr/bin/play_launch_analyzer; \
+	fi
+	# Install docs
+	install -Dm644 README.md debian/play-launch/usr/share/doc/play-launch/README.md
+	install -Dm644 CLAUDE.md debian/play-launch/usr/share/doc/play-launch/CLAUDE.md
+	if [ -d docs ]; then \
+		cp -r docs/* debian/play-launch/usr/share/doc/play-launch/; \
+	fi
+	# Install examples
+	if [ -d test ]; then \
+		mkdir -p debian/play-launch/usr/share/play-launch/examples; \
+		cp -r test/* debian/play-launch/usr/share/play-launch/examples/; \
+	fi
+
+override_dh_auto_clean:
+	rm -rf build install log .cargo build_logs debian/home
+	dh_auto_clean
