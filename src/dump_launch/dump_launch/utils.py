@@ -1,13 +1,8 @@
 import decimal
-from io import StringIO
 from typing import Optional, Text, Tuple
 
+import yaml
 from rcl_interfaces.msg import Parameter
-from ruamel.yaml import YAML
-
-MY_YAML = YAML(typ="safe", pure=True)
-MY_YAML.default_flow_style = True
-MY_YAML.width = 65536
 
 DECIMAL_CONTEXT = decimal.Context()
 DECIMAL_CONTEXT.prec = 20
@@ -88,13 +83,14 @@ def param_to_kv(param: Parameter) -> Tuple[Text, Text]:
 
 
 def dump_yaml(value) -> Text:
-    global MY_YAML
-
-    def strip_nl(s):
-        result, rest = s.split("\n", 1)
-        assert rest in ["", "...\n"], f"the multiline YAML {s} is not expected"
-        return result
-
-    stream = StringIO()
-    MY_YAML.dump(data=value, stream=stream, transform=strip_nl)
-    return stream.getvalue()
+    result = yaml.dump(
+        value,
+        default_flow_style=True,
+        width=65536,
+        allow_unicode=True,
+    )
+    # Strip trailing newline and "...\n" if present
+    result = result.rstrip("\n")
+    if result.endswith("..."):
+        result = result[:-3].rstrip()
+    return result
