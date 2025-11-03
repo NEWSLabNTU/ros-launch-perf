@@ -245,7 +245,7 @@ Overall CPU%, memory, network rates, disk I/O rates, GPU stats (Jetson via jtop 
 
 **Rust**: tokio, rayon, eyre, clap, serde/serde_json/serde_yaml, bincode, rclrs, composition_interfaces, rcl_interfaces, sysinfo, nvml-wrapper, csv
 
-**Python**: ruamel-yaml, pyyaml, lark, packaging, hatchling, pytest, ruff
+**Python**: pyyaml (standard), lark, packaging, hatchling, pytest, ruff
 
 ## Testing
 
@@ -257,6 +257,8 @@ Autoware planning simulator integration test in `test/autoware_planning_simulati
 
 ## Key Recent Fixes
 
+- **2025-11-03**: Fixed ROS deprecation warnings - replaced ruamel.yaml with standard PyYAML in dump_launch (utils.py). Changed LaunchInspector argv to empty list since launch arguments are passed separately via launch_arguments parameter (__init__.py).
+- **2025-11-03**: Fixed "Found remap rule" warnings during replay - changed ROS context initialization in component_loader.rs and container_readiness.rs to use minimal args vector instead of std::env::args(). Launch arguments (e.g., start_rviz:=true) are not ROS node arguments and should not be passed to rclrs::Context::new().
 - **2025-10-30**: Fixed respawn race condition - replaced `tokio::sync::Notify` with `tokio::sync::watch` channel for persistent shutdown state. Respawning nodes (like RViz) now stop immediately on Ctrl-C without spurious restarts. Watch channel provides both immediate `.borrow()` checks and awaitable `.changed()` notifications.
 - **2025-10-30**: Respawn support added - nodes with respawn=True automatically restart on exit, honoring respawn_delay. Ctrl-C during respawn delay stops restart gracefully. Only regular nodes supported (composable nodes limitation documented).
 - **2025-10-29**: CPU metrics completely rewritten - now parses `/proc/[pid]/stat` directly for accurate utime/stime measurement. Previous implementation incorrectly used `run_time()` (wall-clock time) instead of actual CPU time, causing all processes to show similar CPU% affected by system loading.
