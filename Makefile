@@ -1,4 +1,4 @@
-COLCON_BUILD_FLAGS := --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
+COLCON_BUILD_FLAGS := --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release --cargo-args --release
 LOG_DIR := build_logs
 
 .PHONY: default
