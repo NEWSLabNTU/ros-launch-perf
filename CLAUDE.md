@@ -255,9 +255,48 @@ Autoware planning simulator integration test in `test/autoware_planning_simulati
 - `just plot`: Generate resource plots
 - Tested with 52 composable nodes, 15 containers
 
+## Distribution & Packaging
+
+### Debian Package
+
+Build Debian package for Ubuntu 22.04:
+
+```bash
+just build-deb  # Creates play-launch_0.1.0-1_arm64.deb
+```
+
+**Package details:**
+- Built with `scripts/build-deb.sh`
+- Uses `debian/` directory for metadata (control, changelog, rules)
+- Installs to standard FHS paths:
+  - `/usr/bin/play_launch` - main binary
+  - `/usr/lib/play-launch/` - helper binaries and bundled libraries
+  - `/usr/lib/python3.10/dist-packages/` - Python packages
+  - `/usr/share/doc/play-launch/` - documentation
+  - `/usr/share/play-launch/examples/` - test cases
+- Postinst script automatically sets CAP_SYS_PTRACE on I/O helper
+- Size: 2.2 MB compressed (8.7 MB binaries + Python packages)
+
+**Known issue:** Binary currently has hardcoded RPATHs pointing to build directory. Need to either:
+1. Configure Cargo to set RPATH to `/usr/lib/play-launch/lib:/opt/ros/humble/lib` via `.cargo/config.toml`, OR
+2. Bundle all interface libraries (composition_interfaces, rcl_interfaces, etc.) and patch RPATH post-build
+
+**Binary optimization** (completed 2025-11-03):
+- Release profile with `strip = true` and `lto = "thin"`
+- 94% size reduction: 137MB → 8.7MB
+- See `Cargo.toml` [profile.release] section
+
+### Build System
+
+- **justfile**: Task runner (replaced Makefile 2025-11-04)
+- Use `just --list` to see all available recipes
+- Main recipes: `build`, `build-deb`, `clean`, `test`, `lint`, `format`
+
 ## Key Recent Fixes
 
-- **2025-11-03**: Distribution via Pacstall - Created complete pacscript for source-based package installation. Binary size optimized 94% (137MB → 8.7MB) via release profile with strip+LTO. Pacscript handles 3-stage build, dependencies, and multi-arch support automatically. See docs/DISTRIBUTION_PLAN.md for phased rollout strategy.
+- **2025-11-04**: Build system migration - Replaced Makefile with justfile for cleaner syntax. Created Debian packaging with proper Ubuntu 22.04 paths. Extracted build-deb logic to `scripts/build-deb.sh`.
+- **2025-11-03**: Binary optimization - 94% size reduction (137MB → 8.7MB) via Cargo release profile with strip+LTO.
+- **2025-11-03**: Fixed Python dependency - Replaced ruamel.yaml with standard PyYAML (system package).
 - **2025-11-03**: Binary optimization - Added Cargo.toml release profile (strip=true, lto="thin") and Makefile --cargo-args --release flag. Reduced play_launch from 109MB to 6.5MB, play_launch_io_helper from 28MB to 2.2MB (94% total reduction).
 - **2025-11-03**: Fixed ROS deprecation warnings - replaced ruamel.yaml with standard PyYAML in dump_launch (utils.py). Changed LaunchInspector argv to empty list since launch arguments are passed separately via launch_arguments parameter (__init__.py).
 - **2025-11-03**: Fixed "Found remap rule" warnings during replay - changed ROS context initialization in component_loader.rs and container_readiness.rs to use minimal args vector instead of std::env::args(). Launch arguments (e.g., start_rviz:=true) are not ROS node arguments and should not be passed to rclrs::Context::new().
