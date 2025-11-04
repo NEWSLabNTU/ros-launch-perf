@@ -20,7 +20,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     process::{Child, Command},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Client for communicating with the I/O helper daemon
 pub struct IoHelperClient {
@@ -40,7 +40,7 @@ impl IoHelperClient {
     pub async fn spawn() -> Result<Self> {
         let helper_path = find_helper_binary()?;
 
-        info!("Spawning I/O helper: {:?}", helper_path);
+        debug!("Spawning I/O helper: {:?}", helper_path);
 
         // Create pipes for bidirectional communication
         // Pipe 1: Parent writes requests → Helper reads requests
@@ -96,7 +96,7 @@ impl IoHelperClient {
         // Verify helper is working
         client.ping().await?;
 
-        info!("I/O helper connected successfully via pipes");
+        debug!("I/O helper connected successfully via pipes");
 
         Ok(client)
     }

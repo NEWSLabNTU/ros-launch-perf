@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sysinfo::{Networks, Pid, System};
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// GPU metrics tuple: (memory_bytes, gpu_util%, mem_util%, temp_celsius, power_mw, graphics_clock_mhz, memory_clock_mhz)
 type GpuMetricsTuple = (
@@ -287,7 +287,7 @@ impl ResourceMonitor {
         {
             Ok(rt) => match rt.block_on(crate::io_helper_client::IoHelperClient::spawn()) {
                 Ok(client) => {
-                    info!("I/O helper spawned successfully");
+                    debug!("I/O helper spawned successfully");
                     (Some(client), Some(rt), false)
                 }
                 Err(e) => {

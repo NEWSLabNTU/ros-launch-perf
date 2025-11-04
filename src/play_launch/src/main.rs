@@ -420,10 +420,17 @@ async fn run_direct(
             nvml,
         ) {
             Ok(handle) => {
-                info!(
-                    "Resource monitoring enabled (interval: {}ms)",
-                    runtime_config.monitoring.sample_interval_ms
-                );
+                if is_verbose() {
+                    info!(
+                        "Resource monitoring enabled (interval: {}ms)",
+                        runtime_config.monitoring.sample_interval_ms
+                    );
+                } else {
+                    debug!(
+                        "Resource monitoring enabled (interval: {}ms)",
+                        runtime_config.monitoring.sample_interval_ms
+                    );
+                }
                 debug!("Monitoring thread handle created successfully");
                 Some(handle)
             }
@@ -805,10 +812,17 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
             nvml,
         ) {
             Ok(handle) => {
-                info!(
-                    "Resource monitoring enabled (interval: {}ms)",
-                    runtime_config.monitoring.sample_interval_ms
-                );
+                if is_verbose() {
+                    info!(
+                        "Resource monitoring enabled (interval: {}ms)",
+                        runtime_config.monitoring.sample_interval_ms
+                    );
+                } else {
+                    debug!(
+                        "Resource monitoring enabled (interval: {}ms)",
+                        runtime_config.monitoring.sample_interval_ms
+                    );
+                }
                 Some(handle)
             }
             Err(e) => {
