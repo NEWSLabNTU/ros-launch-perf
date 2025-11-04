@@ -128,12 +128,6 @@ install -Dm644 README.md "${DEB_DIR}/usr/share/doc/play-launch/README.md"
 install -Dm644 CLAUDE.md "${DEB_DIR}/usr/share/doc/play-launch/CLAUDE.md"
 [ -d docs ] && cp -r docs/* "${DEB_DIR}/usr/share/doc/play-launch/" 2>/dev/null || true
 
-# Install examples
-if [ -d test ]; then
-    mkdir -p "${DEB_DIR}/usr/share/play-launch/examples"
-    cp -r test/* "${DEB_DIR}/usr/share/play-launch/examples/"
-fi
-
 # Build .deb
 dpkg-deb --build "${DEB_DIR}" "${PKG_NAME}.deb"
 rm -rf "${DEB_DIR}"
