@@ -161,7 +161,7 @@ Both `dump_launch` and `play_launch` must be available in PATH:
 
 ```bash
 # Build the workspace
-cd /path/to/ros-launch-perf
+cd /path/to/play-launch
 make build
 
 # Source the workspace

@@ -11,7 +11,7 @@ This package provides tools to analyze and visualize resource usage metrics coll
 Build the workspace:
 
 ```bash
-cd /path/to/ros-launch-perf
+cd /path/to/play-launch
 make build
 source install/setup.bash
 ```

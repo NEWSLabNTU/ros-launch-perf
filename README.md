@@ -16,7 +16,7 @@ A comprehensive toolkit for recording, replaying, and analyzing ROS 2 launch exe
 
 ## Install Pre-built Packages (Recommended)
 
-Find the latest packages in the [Release page](https://github.com/NEWSLabNTU/ros-launch-perf/releases) and follow the instructions.
+Find the latest packages in the [Release page](https://github.com/NEWSLabNTU/play-launch/releases) and follow the instructions.
 
 
 ## Install from Source
@@ -31,8 +31,8 @@ Find the latest packages in the [Release page](https://github.com/NEWSLabNTU/ros
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/NEWSLabNTU/ros-launch-perf.git
-cd ros-launch-perf
+git clone https://github.com/NEWSLabNTU/play-launch.git
+cd play-launch
 ```
 
 2. Install all dependencies:

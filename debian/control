@@ -13,7 +13,7 @@ Build-Depends: debhelper (>= 10),
                ros-humble-desktop,
                just
 Standards-Version: 4.5.0
-Homepage: https://github.com/NEWSLabNTU/ros-launch-perf
+Homepage: https://github.com/NEWSLabNTU/play-launch
 
 Package: play-launch
 Architecture: any

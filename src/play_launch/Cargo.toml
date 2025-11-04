@@ -4,8 +4,8 @@ version = "0.2.0"
 edition = "2021"
 authors = ["Lin, Hsiang-Jui <jerry73204@gmail.com>"]
 description = "ROS launch record player"
-homepage = "https://github.com/NEWSLabNTU/ros-launch-perf"
-repository = "https://github.com/NEWSLabNTU/ros-launch-perf.git"
+homepage = "https://github.com/NEWSLabNTU/play-launch"
+repository = "https://github.com/NEWSLabNTU/play-launch.git"
 readme = "README.md"
 license = "BSD"
 
