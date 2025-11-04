@@ -1,3 +1,14 @@
+play-launch (0.2.0-1) unstable; urgency=medium
+
+  * Phase 7: Logging Improvements
+  * Refined I/O helper logging levels (DEBUG by default, visible with --verbose)
+  * Added periodic node error monitoring (warns about high stderr activity)
+  * Error monitoring configurable via config.yaml (threshold, interval, rate limit)
+  * Fixed error monitoring to accumulate errors between warnings
+  * Reduced default rate limit from 5 minutes to 1 minute for responsiveness
+
+ -- Jerry Lin <jerry73204@gmail.com>  Mon, 04 Nov 2025 12:00:00 +0000
+
 play-launch (0.1.0-1) unstable; urgency=medium
 
   * Initial release
