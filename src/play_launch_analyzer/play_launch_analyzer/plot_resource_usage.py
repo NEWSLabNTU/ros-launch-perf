@@ -67,6 +67,12 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
     io_write_rates = []
     tcp_conns = []
     udp_conns = []
+    num_threads_list = []
+    io_syscr_list = []
+    io_syscw_list = []
+    io_storage_read_list = []
+    io_storage_write_list = []
+    io_cancelled_write_list = []
 
     with open(csv_path, "r") as f:
         reader = csv.DictReader(f)
@@ -112,6 +118,28 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
             udp_str = row.get("udp_connections", "").strip()
             udp_conns.append(int(udp_str) if udp_str else None)
 
+            # Parse thread count
+            threads_str = row.get("num_threads", "").strip()
+            num_threads_list.append(int(threads_str) if threads_str else None)
+
+            # Parse I/O syscall counts
+            syscr_str = row.get("io_syscr", "").strip()
+            io_syscr_list.append(int(syscr_str) if syscr_str else None)
+
+            syscw_str = row.get("io_syscw", "").strip()
+            io_syscw_list.append(int(syscw_str) if syscw_str else None)
+
+            # Parse storage I/O bytes (cache-excluded)
+            storage_read_str = row.get("io_storage_read_bytes", "").strip()
+            io_storage_read_list.append(int(storage_read_str) if storage_read_str else None)
+
+            storage_write_str = row.get("io_storage_write_bytes", "").strip()
+            io_storage_write_list.append(int(storage_write_str) if storage_write_str else None)
+
+            # Parse cancelled write bytes
+            cancelled_str = row.get("io_cancelled_write_bytes", "").strip()
+            io_cancelled_write_list.append(int(cancelled_str) if cancelled_str else None)
+
     if not timestamps:
         return None
 
@@ -135,6 +163,12 @@ def parse_csv_file(csv_path: Path) -> Optional[Dict]:
         "io_write_mbps": [w / (1024**2) if w is not None else None for w in io_write_rates],
         "tcp": tcp_conns,
         "udp": udp_conns,
+        "num_threads": num_threads_list,
+        "io_syscr": io_syscr_list,
+        "io_syscw": io_syscw_list,
+        "io_storage_read_mb": [sr / (1024**2) if sr is not None else None for sr in io_storage_read_list],
+        "io_storage_write_mb": [sw / (1024**2) if sw is not None else None for sw in io_storage_write_list],
+        "io_cancelled_write_kb": [cw / 1024 if cw is not None else None for cw in io_cancelled_write_list],
     }
 
 
@@ -538,6 +572,9 @@ def create_individual_charts(
     has_gpu_power = has_data(metrics, "gpu_power_w")
     has_gpu_clock = has_data(metrics, "gpu_graphics_clock")
     has_network = has_data(metrics, "tcp") or has_data(metrics, "udp")
+    has_threads = has_data(metrics, "num_threads")
+    has_syscalls = has_data(metrics, "io_syscr") or has_data(metrics, "io_syscw")
+    has_storage_io = has_data(metrics, "io_storage_read_mb") or has_data(metrics, "io_storage_write_mb")
 
     chart_config = {
         'displayModeBar': True,
@@ -957,6 +994,148 @@ def create_individual_charts(
         fig.write_html(str(output_path), config=chart_config)
         charts_created.append(("GPU Clocks", output_path))
 
+    # Create Thread count timeline chart
+    if "cpu" in metrics_to_plot and has_threads:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+            thread_values = node_data["num_threads"]
+            plot_times = [t for t, v in zip(times, thread_values) if v is not None]
+            plot_values = [v for v in thread_values if v is not None]
+
+            if plot_values:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times,
+                        y=plot_values,
+                        mode='lines',
+                        name=node_name,
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Threads: %{y:.0f}<extra></extra>'
+                    )
+                )
+
+        fig.update_layout(
+            title="Thread Count Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="Thread Count",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "threads_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("Thread Count Timeline", output_path))
+
+    # Create I/O Syscalls timeline chart
+    if "io" in metrics_to_plot and has_syscalls:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            # Plot read syscalls
+            syscr_values = node_data["io_syscr"]
+            plot_times_read = [t for t, v in zip(times, syscr_values) if v is not None]
+            plot_values_read = [v for v in syscr_values if v is not None]
+
+            if plot_values_read:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_read,
+                        y=plot_values_read,
+                        mode='lines',
+                        name=f"{node_name} (read)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Read syscalls: %{y:.0f}<extra></extra>',
+                        line=dict(dash='solid')
+                    )
+                )
+
+            # Plot write syscalls
+            syscw_values = node_data["io_syscw"]
+            plot_times_write = [t for t, v in zip(times, syscw_values) if v is not None]
+            plot_values_write = [v for v in syscw_values if v is not None]
+
+            if plot_values_write:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_write,
+                        y=plot_values_write,
+                        mode='lines',
+                        name=f"{node_name} (write)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Write syscalls: %{y:.0f}<extra></extra>',
+                        line=dict(dash='dash')
+                    )
+                )
+
+        fig.update_layout(
+            title="I/O System Calls Over Time",
+            xaxis_title="Time (s)",
+            yaxis_title="System Call Count",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "io_syscalls_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("I/O Syscalls Timeline", output_path))
+
+    # Create Storage I/O timeline chart (cache-excluded disk I/O)
+    if "io" in metrics_to_plot and has_storage_io:
+        fig = go.Figure()
+        for node_name, node_data in sorted(metrics.items()):
+            times = node_data["times"]
+
+            # Plot storage read
+            storage_read_values = node_data["io_storage_read_mb"]
+            plot_times_read = [t for t, v in zip(times, storage_read_values) if v is not None]
+            plot_values_read = [v for v in storage_read_values if v is not None]
+
+            if plot_values_read:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_read,
+                        y=plot_values_read,
+                        mode='lines',
+                        name=f"{node_name} (read)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Read: %{y:.2f} MB<extra></extra>',
+                        line=dict(dash='solid')
+                    )
+                )
+
+            # Plot storage write
+            storage_write_values = node_data["io_storage_write_mb"]
+            plot_times_write = [t for t, v in zip(times, storage_write_values) if v is not None]
+            plot_values_write = [v for v in storage_write_values if v is not None]
+
+            if plot_values_write:
+                fig.add_trace(
+                    go.Scatter(
+                        x=plot_times_write,
+                        y=plot_values_write,
+                        mode='lines',
+                        name=f"{node_name} (write)",
+                        hovertemplate='<b>%{fullData.name}</b><br>Time: %{x:.2f}s<br>Storage Write: %{y:.2f} MB<extra></extra>',
+                        line=dict(dash='dash')
+                    )
+                )
+
+        fig.update_layout(
+            title="Storage I/O Over Time (cache-excluded)",
+            xaxis_title="Time (s)",
+            yaxis_title="Storage I/O (MB)",
+            height=800,
+            hovermode='closest',
+            template='plotly_white',
+            showlegend=False
+        )
+
+        output_path = output_dir / "io_storage_timeline.html"
+        fig.write_html(str(output_path), config=chart_config)
+        charts_created.append(("Storage I/O Timeline", output_path))
+
     # Return created charts list for minimalist summary
     return charts_created
 
@@ -1010,6 +1189,25 @@ def calculate_statistics(metrics: Dict[str, Dict], output_path: Path):
             stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:8.2f} MB  Avg: {stat['avg']:8.2f} MB")
         stats_lines.append("")
 
+    # Thread count statistics
+    thread_stats = []
+    for node_name, node_data in metrics.items():
+        thread_values = [v for v in node_data["num_threads"] if v is not None]
+        if thread_values:
+            thread_stats.append({
+                'node': node_name,
+                'max': max(thread_values),
+                'avg': sum(thread_values) / len(thread_values)
+            })
+
+    if thread_stats:
+        stats_lines.append("THREAD COUNT (Top 10)")
+        stats_lines.append("-" * 80)
+        thread_stats.sort(key=lambda x: x['max'], reverse=True)
+        for i, stat in enumerate(thread_stats[:10], 1):
+            stats_lines.append(f"{i:2d}. {stat['node']:50s} Max: {stat['max']:6.0f}  Avg: {stat['avg']:6.1f}")
+        stats_lines.append("")
+
     stats_lines.append("=" * 80)
 
     # Write to file
@@ -1027,6 +1225,11 @@ def list_available_metrics(metrics: Dict[str, Dict]):
         ("rss_mb", "Memory usage"),
         ("io_read_mbps", "I/O read rates"),
         ("io_write_mbps", "I/O write rates"),
+        ("io_syscr", "I/O syscalls (read)"),
+        ("io_syscw", "I/O syscalls (write)"),
+        ("io_storage_read_mb", "Storage I/O read (cache-excluded)"),
+        ("io_storage_write_mb", "Storage I/O write (cache-excluded)"),
+        ("num_threads", "Thread count"),
         ("gpu_mem_mb", "GPU memory"),
         ("gpu_util", "GPU utilization"),
         ("gpu_temp", "GPU temperature"),
