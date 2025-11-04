@@ -1878,10 +1878,6 @@ name = "nav_msgs"
 version = "4.9.0"
 
 [[patch.unused]]
-name = "play_launch"
-version = "0.2.0"
-
-[[patch.unused]]
 name = "rosgraph_msgs"
 version = "1.2.2"
 
