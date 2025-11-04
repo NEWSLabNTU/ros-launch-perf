@@ -14,20 +14,50 @@ A comprehensive toolkit for recording, replaying, and analyzing ROS 2 launch exe
 - **Container Support**: Full support for ROS 2 composable nodes and containers
 
 
-## Install Pre-built Packages (Recommended)
+## Installation
 
-Find the latest packages in the [Release page](https://github.com/NEWSLabNTU/play-launch/releases) and follow the instructions.
+### Install from Debian Package (Recommended)
 
+The easiest way to install play-launch is using the pre-built Debian package.
 
-## Install from Source
+**Prerequisites:**
+- Ubuntu 22.04 (Jammy) with ROS 2 Humble
 
-### Prerequisites
+**Installation Steps:**
+
+1. Download the latest `.deb` package from the [Releases page](https://github.com/NEWSLabNTU/play-launch/releases):
+
+```bash
+wget https://github.com/NEWSLabNTU/play-launch/releases/download/v0.2.0/play-launch_0.2.0_amd64.deb
+```
+
+2. Install the package:
+
+```bash
+sudo apt install ./play-launch_0.2.0_amd64.deb
+```
+
+3. Verify the installation:
+
+```bash
+# Source ROS 2 environment
+source /opt/ros/humble/setup.bash
+
+# Check if play_launch is available
+play_launch --help
+```
+
+**Note:** For other architectures or ROS distributions, please [build from source](#install-from-source).
+
+### Install from Source
+
+**Prerequisites:**
 
 - **ROS 2** (Humble or later)
 - **Rust toolchain**: Install from [rustup.rs](https://rustup.rs/)
 - **Python 3** with pip
 
-### Installation
+**Installation Steps:**
 
 1. Clone the repository:
 ```bash
