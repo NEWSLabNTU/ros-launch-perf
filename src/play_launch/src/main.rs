@@ -8,6 +8,7 @@ mod execution;
 mod io_helper_client;
 mod launch_dump;
 mod node_cmdline;
+mod node_error_monitor;
 mod options;
 mod plot_launcher;
 mod resource_monitor;
@@ -444,6 +445,31 @@ async fn run_direct(
         None
     };
 
+    // Spawn error monitoring thread
+    let error_monitor_config = node_error_monitor::NodeErrorMonitorConfig {
+        enabled: runtime_config.error_monitoring.enabled,
+        check_interval_secs: runtime_config.error_monitoring.check_interval_secs,
+        error_threshold_lines: runtime_config.error_monitoring.error_threshold_lines,
+        rate_limit_secs: runtime_config.error_monitoring.rate_limit_secs,
+    };
+
+    let _error_monitor_thread = if error_monitor_config.enabled {
+        match node_error_monitor::spawn_error_monitor_thread(error_monitor_config, log_dir.clone())
+        {
+            Ok(handle) => {
+                debug!("Error monitoring thread started");
+                Some(handle)
+            }
+            Err(e) => {
+                debug!("Error monitoring disabled: {}", e);
+                None
+            }
+        }
+    } else {
+        debug!("Error monitoring disabled");
+        None
+    };
+
     // Prepare node execution contexts
     let container_names = HashSet::new();
     let NodeContextClasses {
@@ -835,6 +861,31 @@ async fn play(input_file: &Path, common: &options::CommonOptions, pgid: i32) -> 
         None
     };
     debug!("Monitoring initialization complete");
+
+    // Spawn error monitoring thread
+    let error_monitor_config = node_error_monitor::NodeErrorMonitorConfig {
+        enabled: runtime_config.error_monitoring.enabled,
+        check_interval_secs: runtime_config.error_monitoring.check_interval_secs,
+        error_threshold_lines: runtime_config.error_monitoring.error_threshold_lines,
+        rate_limit_secs: runtime_config.error_monitoring.rate_limit_secs,
+    };
+
+    let _error_monitor_thread = if error_monitor_config.enabled {
+        match node_error_monitor::spawn_error_monitor_thread(error_monitor_config, log_dir.clone())
+        {
+            Ok(handle) => {
+                debug!("Error monitoring thread started");
+                Some(handle)
+            }
+            Err(e) => {
+                debug!("Error monitoring disabled: {}", e);
+                None
+            }
+        }
+    } else {
+        debug!("Error monitoring disabled");
+        None
+    };
 
     // Build a table of composable node containers
     debug!("Building container names table...");

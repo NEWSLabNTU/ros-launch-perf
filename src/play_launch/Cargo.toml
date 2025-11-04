@@ -51,6 +51,9 @@ which = "6.0"
 [build-dependencies]
 pkg-config = "0.3"
 
+[dev-dependencies]
+tempfile = "3.8"
+
 # Release profile optimization for smaller binary size
 [profile.release]
 strip = true        # Strip debug symbols (reduces binary size by ~50-60%)
