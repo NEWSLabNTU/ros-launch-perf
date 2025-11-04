@@ -15,6 +15,24 @@ This document outlines the implementation roadmap for the unified `play_launch` 
 
 ## Current Status
 
+**Overall Progress**: ~85% complete (5 of 7 phases complete, 2 partially complete)
+
+**Completed Phases**:
+- ✅ Phase 1: Core Subcommand Structure
+- ✅ Phase 2: dump_launch Integration
+- ✅ Phase 2.5: CLI Simplification
+- ✅ Phase 6: I/O Helper Integration
+- ✅ Phase 7: Logging Improvements (2025-11-04)
+
+**In Progress**:
+- 🔄 Phase 3: Documentation & Polish (partial)
+- 🔄 Phase 4: Testing & Validation (partial)
+
+**Planned**:
+- ⏳ Phase 5: Optional Enhancements (future work)
+
+---
+
 ### ✅ Phase 1: Core Subcommand Structure (COMPLETE)
 
 The subcommand-based CLI interface has been fully implemented with the following structure:
@@ -564,14 +582,17 @@ export PLAY_LAUNCH_CONFIG="custom_config.yaml"
 
 | Phase | Days | Status | Dependencies |
 |-------|------|--------|--------------|
-| Phase 1 | 2-3 | ✅ Complete | None |
-| Phase 2 | 2-3 | ⏳ TODO | Phase 1 |
-| Phase 3 | 1 | 🔄 Partial | Phase 2 |
-| Phase 4 | 2-3 | ⏳ TODO | Phases 2-3 |
-| **Total (MVP)** | **7-10 days** | **~30% Complete** | |
-| Phase 5 (optional) | 1-2 | ⏳ Future | MVP |
+| Phase 1: Core Subcommand Structure | 2-3 | ✅ Complete | None |
+| Phase 2: dump_launch Integration | 2-3 | ✅ Complete | Phase 1 |
+| Phase 2.5: CLI Simplification | 1 | ✅ Complete | Phase 2 |
+| Phase 3: Documentation & Polish | 1 | 🔄 Partial | Phase 2 |
+| Phase 4: Testing & Validation | 2-3 | 🔄 Partial | Phases 2-3 |
+| Phase 5: Optional Enhancements | 1-2 | ⏳ Future | MVP |
+| Phase 6: I/O Helper Integration | 1 | ✅ Complete | None |
+| Phase 7: Logging Improvements | 1 | ✅ Complete | Phase 6 |
+| **Total (Core Phases 1-7)** | **10-13 days** | **~85% Complete** | |
 
-**Current Progress**: Phase 1 complete (~30% of MVP)
+**Current Progress**: Phases 1, 2, 2.5, 6, 7 complete. Phases 3, 4 partially complete.
 
 ---
 
@@ -582,10 +603,13 @@ export PLAY_LAUNCH_CONFIG="custom_config.yaml"
 - ROS 2 workspace must be sourced for dump_launch to be in PATH
 
 ### Rust Crates
-- ✅ `clap` (already present) - CLI parsing
-- ✅ `tokio` (already present) - Async runtime
-- ✅ `eyre` (already present) - Error handling
-- ⏳ `which` (to be added) - Finding binaries in PATH
+- ✅ `clap` (present) - CLI parsing
+- ✅ `tokio` (present) - Async runtime
+- ✅ `eyre` (present) - Error handling
+- ✅ `which` (present) - Finding binaries in PATH
+- ✅ `sysinfo` (present) - System and process information
+- ✅ `nvml-wrapper` (present) - NVIDIA GPU monitoring
+- ✅ `csv` (present) - CSV file generation
 
 ---
 
@@ -1020,6 +1044,223 @@ make verify-io-helper
   - PR_SET_PDEATHSIG (kernel-level guarantee)
   - `kill_on_drop(true)` in IoHelperClient
   - Manual testing of crash scenarios
+
+---
+
+## Phase 7: Logging Improvements
+
+**Goal**: Reduce log noise and improve visibility of node errors without affecting functionality.
+
+**Status**: 🔄 Proposed
+
+**Estimated Effort**: 1-2 days
+
+### Background
+
+Current logging has two areas for improvement:
+1. **I/O helper logs are too verbose**: Successful initialization produces INFO-level logs that clutter terminal output, especially when monitoring is disabled or users don't need to see internal subsystem details.
+2. **Node errors are logged to files only**: If a node continuously prints errors during execution, users don't know until checking log files or the node exits with error code.
+
+### Work Items
+
+#### 7.1 Refine I/O Helper Logging Levels
+
+**Problem**: I/O helper initialization produces excessive INFO-level logs that clutter terminal output, even when monitoring is disabled or users haven't requested verbose output.
+
+**Current Behavior**:
+```
+INFO I/O helper spawned successfully
+INFO I/O helper connected successfully via pipes
+INFO Resource monitoring enabled (interval: 1000ms)
+```
+
+**Desired Behavior**:
+- Without `--verbose`: No I/O helper initialization logs (only warnings/errors)
+- With `--verbose`: Full I/O helper initialization sequence visible
+- With `RUST_LOG=debug`: Complete debug-level logging available
+
+**Files to Modify**:
+1. `src/play_launch/src/resource_monitor.rs` (lines 286-305, 424-427)
+2. `src/play_launch/src/io_helper_client.rs` (lines 40-102)
+
+**Changes**:
+
+1. **Downgrade successful initialization from INFO to DEBUG**:
+   - Line 290 in resource_monitor.rs: `info!("I/O helper spawned successfully")` → `debug!(...)`
+   - Line 99 in io_helper_client.rs: `info!("I/O helper connected successfully via pipes")` → `debug!(...)`
+   - Line 43 in io_helper_client.rs: `info!("Spawning I/O helper: {:?}", helper_path)` → `debug!(...)`
+   - Line 52 in io_helper_client.rs: `debug!("Created pipes...")` (already debug, no change)
+
+2. **Gate monitoring-enabled message behind verbose flag**:
+   ```rust
+   // Lines 424-427 in resource_monitor.rs
+   if crate::is_verbose() {
+       info!("Resource monitoring enabled (interval: {}ms)", self.config.sample_interval_ms);
+   } else {
+       debug!("Resource monitoring enabled (interval: {}ms)", self.config.sample_interval_ms);
+   }
+   ```
+
+3. **Keep warnings at WARN level** (no changes):
+   - Capability warnings (lines 275-280 in io_helper_client.rs)
+   - Batch request failures (lines 1228-1231 in resource_monitor.rs)
+   - These remain visible regardless of verbosity
+
+**Rationale**:
+- INFO logs should be user-facing information about execution progress (nodes starting, errors, completion)
+- Internal subsystem initialization (like I/O helper) should be DEBUG-level
+- Monitoring status should only be INFO when user explicitly requests verbose output
+- Errors and warnings must remain visible regardless of verbosity setting
+
+**Testing**:
+- [x] Without `--verbose`: No I/O helper logs appear in terminal
+- [x] Without `--verbose`: Warnings/errors still visible
+- [x] With `--verbose`: Full I/O helper initialization sequence shown
+- [x] With `RUST_LOG=debug`: All debug logs visible including helper details
+- [x] Helper failures (missing capability, spawn errors) still show warnings
+
+**Status**: ✅ **COMPLETE** (2025-11-04)
+
+**Complexity**: Low (simple log level adjustments)
+
+**Priority**: Medium (quality of life improvement)
+
+---
+
+#### 7.2 Periodic Node Error Summary
+
+**Problem**: Node stderr is written to log files (`play_log/<timestamp>/node/<node_name>/err`). If a node continuously prints errors during execution, users don't discover the issue until:
+- Manually checking log files
+- Node exits with error code (which triggers error message)
+
+This makes debugging difficult for long-running nodes with intermittent errors.
+
+**Desired Behavior**: Periodically scan node stderr files and alert users to nodes with high error output rates.
+
+**Example Terminal Output**:
+```
+Warning: Node 'pointcloud_preprocessor' has printed 127 error lines in the last 30s
+  Check: play_log/2025-11-04_10-30-00/node/pointcloud_preprocessor/err
+
+Warning: Node 'lidar_centerpoint' has printed 89 error lines in the last 30s
+  Check: play_log/2025-11-04_10-30-00/node/lidar_centerpoint/err
+```
+
+**Implementation Approach**:
+
+1. **Create new module**: `src/play_launch/src/node_error_monitor.rs`
+   ```rust
+   pub struct NodeErrorMonitor {
+       log_base_dir: PathBuf,
+       error_counts: HashMap<String, ErrorStats>,
+       check_interval: Duration,  // e.g., 30 seconds
+       error_threshold: usize,     // e.g., 10 lines per interval
+   }
+
+   struct ErrorStats {
+       last_line_count: usize,
+       cumulative_reported: usize,
+   }
+
+   impl NodeErrorMonitor {
+       pub fn new(log_base_dir: PathBuf) -> Self;
+       pub fn check_all_nodes(&mut self) -> Vec<NodeErrorSummary>;
+   }
+   ```
+
+2. **Integrate with execution loop** (`src/play_launch/src/execution.rs`):
+   - Spawn background thread or use periodic timer
+   - Every 30 seconds, call `monitor.check_all_nodes()`
+   - Print warnings to terminal for nodes exceeding threshold
+   - Track cumulative counts to avoid repeated warnings for same issues
+
+3. **stderr File Monitoring**:
+   - Use `std::fs::metadata()` to check file sizes
+   - Compare with previous size to calculate new lines (approximate)
+   - Or use `BufReader` to count lines (more accurate but I/O intensive)
+   - Only scan files that have grown since last check
+
+4. **Threshold Logic**:
+   - Configurable threshold (default: 10 error lines per 30s interval)
+   - Track per-node: don't re-warn for same errors
+   - Reset counts after warning printed (or use sliding window)
+
+**Files to Modify**:
+- `src/play_launch/src/node_error_monitor.rs` (NEW)
+- `src/play_launch/src/execution.rs` (integrate monitor)
+- `src/play_launch/src/options.rs` (add config options if needed)
+
+**Benefits**:
+- **Non-intrusive**: Doesn't clutter terminal with all stderr output
+- **Actionable**: Tells user exactly which nodes need attention and where to find logs
+- **Preserves full logs**: Complete stderr remains in files for detailed investigation
+- **Timely**: Alerts users to problems during execution, not just at exit
+
+**Future Enhancements** (optional):
+- Add `--error-threshold <n>` CLI flag to adjust sensitivity
+- Add `--error-check-interval <secs>` to adjust monitoring frequency
+- Show sample error lines in terminal (first/last few lines)
+- Integration with `--verbose` flag (show more details when verbose)
+
+**Testing**:
+- [x] Monitor detects nodes with high stderr activity
+- [x] Warnings appear at correct intervals (default: 30s, tested with 5s)
+- [x] File size tracking works correctly
+- [x] Performance impact minimal (quick file stat checks)
+- [x] Works with nodes that write to stderr continuously
+- [x] Log file paths in warnings are correct and accessible
+- [x] Rate limiting prevents warning spam (5 minute cooldown)
+- [x] Works for both regular nodes and load_node directories
+
+**Status**: ✅ **COMPLETE** (2025-11-04)
+
+**Complexity**: Medium (new module, threading/timing, file I/O)
+
+**Priority**: Medium (debugging aid, not critical for core functionality)
+
+**Implementation Notes**:
+- Consider using `notify` crate for efficient file watching (optional optimization)
+- Use `warn!()` macro for consistency with other warnings
+- Respect `--verbose` flag: show more details when verbose enabled
+- Handle edge cases: nodes that haven't started yet, nodes that exited, etc.
+
+---
+
+### Success Criteria
+
+**Phase 7.1** (Refine I/O Helper Logging):
+- [x] Default terminal output shows no I/O helper initialization logs
+- [x] Warnings and errors still visible regardless of verbosity
+- [x] `--verbose` flag shows full helper initialization sequence
+- [x] No functional changes, only log level adjustments
+
+**Phase 7.2** (Periodic Node Error Summary):
+- [x] Background monitoring thread detects high stderr activity
+- [x] Terminal warnings show node name, line count estimate, and log file path
+- [x] Threshold configurable via config.yaml (default: 10 lines per 30s)
+- [x] Minimal performance impact (file stat operations only)
+- [x] Works across different node types (regular nodes and composable nodes)
+
+### Dependencies
+- ✅ Verbose flag implementation (already exists in options.rs)
+- ✅ Log directory structure (already established)
+- ✅ Background thread management (pattern from resource_monitor.rs)
+
+### Risks and Mitigation
+
+**Risk**: File I/O overhead from checking stderr files
+- **Mitigation**: Use file size checks (fast) instead of reading full files
+- **Mitigation**: Only check files that have grown since last check
+- **Validation**: Benchmark with large number of nodes (50+)
+
+**Risk**: False positives for nodes with expected verbose output
+- **Mitigation**: Set reasonable threshold (10+ lines per 30s)
+- **Mitigation**: Allow users to adjust threshold via config
+- **Future**: Add pattern matching to distinguish errors from info logs
+
+**Risk**: Thread synchronization issues with execution loop
+- **Mitigation**: Use message passing or atomic flags for coordination
+- **Mitigation**: Make monitor read-only (no modifications to execution state)
 
 ---
 
