@@ -7,7 +7,8 @@ if [ ! -f install/play_launch/lib/play_launch/play_launch ]; then
     exit 1
 fi
 
-VERSION=$(grep '^play-launch' debian/changelog | head -1 | sed 's/.*(\(.*\)).*/\1/')
+# Extract version from Cargo.toml (e.g., version = "0.2.0")
+VERSION=$(grep '^version' src/play_launch/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
 ARCH=$(dpkg --print-architecture)
 PKG_NAME="play-launch_${VERSION}_${ARCH}"
 DEB_DIR="debian/play-launch"
