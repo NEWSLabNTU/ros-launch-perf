@@ -88,9 +88,40 @@ fi
     install -Dm755 install/dump_launch/lib/dump_launch/dump_launch \
         "${DEB_DIR}/usr/bin/dump_launch"
 
+# Install ROS2 package metadata for dump_launch
+if [ -d install/dump_launch ]; then
+    # Install package.xml
+    install -Dm644 install/dump_launch/share/dump_launch/package.xml \
+        "${DEB_DIR}/opt/ros/humble/share/dump_launch/package.xml"
+
+    # Install ament_index marker file
+    mkdir -p "${DEB_DIR}/opt/ros/humble/share/ament_index/resource_index/packages"
+    touch "${DEB_DIR}/opt/ros/humble/share/ament_index/resource_index/packages/dump_launch"
+
+    # Symlink executable to ROS lib location
+    mkdir -p "${DEB_DIR}/opt/ros/humble/lib/dump_launch"
+    ln -sf /usr/bin/dump_launch \
+        "${DEB_DIR}/opt/ros/humble/lib/dump_launch/dump_launch"
+fi
+
 [ -f install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer ] && \
     install -Dm755 install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer \
         "${DEB_DIR}/usr/bin/play_launch_analyzer"
+
+# Install ROS2 package metadata for play_launch_analyzer
+if [ -d install/play_launch_analyzer ]; then
+    # Install package.xml
+    install -Dm644 install/play_launch_analyzer/share/play_launch_analyzer/package.xml \
+        "${DEB_DIR}/opt/ros/humble/share/play_launch_analyzer/package.xml"
+
+    # Install ament_index marker file (directory already created above)
+    touch "${DEB_DIR}/opt/ros/humble/share/ament_index/resource_index/packages/play_launch_analyzer"
+
+    # Symlink executable to ROS lib location
+    mkdir -p "${DEB_DIR}/opt/ros/humble/lib/play_launch_analyzer"
+    ln -sf /usr/bin/play_launch_analyzer \
+        "${DEB_DIR}/opt/ros/humble/lib/play_launch_analyzer/play_launch_analyzer"
+fi
 
 # Install docs
 install -Dm644 README.md "${DEB_DIR}/usr/share/doc/play-launch/README.md"
