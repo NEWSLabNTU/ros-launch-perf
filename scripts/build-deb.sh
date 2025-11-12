@@ -67,21 +67,26 @@ install -Dm755 install/play_launch/lib/play_launch/play_launch \
 install -Dm755 install/play_launch/lib/play_launch/play_launch_io_helper \
     "${DEB_DIR}/usr/lib/play-launch/play_launch_io_helper"
 
-# Install Python packages (copy actual files, not symlinks)
-if [ -d src/dump_launch/dump_launch ]; then
-    mkdir -p "${DEB_DIR}/usr/lib/python3.10/dist-packages"
-    cp -rL src/dump_launch/dump_launch \
-        "${DEB_DIR}/usr/lib/python3.10/dist-packages/"
-    # Remove __pycache__
-    find "${DEB_DIR}/usr/lib/python3.10/dist-packages/dump_launch" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-fi
+# Install Python packages from wheels
+if [ -d wheels ]; then
+    echo "Installing Python packages from wheels..."
+    TEMP_VENV=$(mktemp -d)
+    python3 -m venv "${TEMP_VENV}"
+    "${TEMP_VENV}/bin/pip" install --no-deps wheels/*.whl
 
-if [ -d src/play_launch_analyzer/play_launch_analyzer ]; then
+    # Copy installed packages to debian directory
     mkdir -p "${DEB_DIR}/usr/lib/python3.10/dist-packages"
-    cp -rL src/play_launch_analyzer/play_launch_analyzer \
+    cp -r "${TEMP_VENV}"/lib/python3.10/site-packages/* \
         "${DEB_DIR}/usr/lib/python3.10/dist-packages/"
-    # Remove __pycache__
-    find "${DEB_DIR}/usr/lib/python3.10/dist-packages/play_launch_analyzer" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+    # Remove unnecessary files
+    rm -rf "${DEB_DIR}"/usr/lib/python3.10/dist-packages/{_virtualenv.*,pip*,setuptools*,pkg_resources,distutils-precedence.pth}
+    find "${DEB_DIR}/usr/lib/python3.10/dist-packages" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+    # Cleanup
+    rm -rf "${TEMP_VENV}"
+else
+    echo "Warning: wheels directory not found. Run 'just build-wheels' first."
 fi
 
 # Install Python scripts
