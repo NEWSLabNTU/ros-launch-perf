@@ -82,8 +82,15 @@ verify-io-helper:
 clean:
     rm -rf build install log .cargo {{log_dir}}
 
+# Build Python wheels for packaging
+build-wheels:
+    @echo "Building Python wheels..."
+    @mkdir -p wheels
+    cd src/dump_launch && python3 -m pip wheel --no-deps -w ../../wheels .
+    cd src/play_launch_analyzer && python3 -m pip wheel --no-deps -w ../../wheels .
+
 # Build Debian package
-build-deb:
+build-deb: build-wheels
     ./scripts/build-deb.sh
 
 # Run all tests
