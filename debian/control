@@ -10,14 +10,32 @@ Build-Depends: debhelper (>= 10),
                pkg-config,
                python3-pip,
                python3-dev,
-               ros-humble-desktop,
-               just
+               python3-venv,
+               ros-humble-rcl,
+               ros-humble-composition-interfaces,
+               ros-humble-ament-index-python,
+               ros-humble-launch
 Standards-Version: 4.5.0
 Homepage: https://github.com/NEWSLabNTU/play-launch
 
 Package: play-launch
 Architecture: any
-Depends: ros-humble-desktop
+Depends: ros-humble-rcl,
+         ros-humble-rcutils,
+         ros-humble-rmw,
+         ros-humble-rosidl-typesupport-c,
+         ros-humble-composition-interfaces,
+         ros-humble-rcl-interfaces,
+         ros-humble-builtin-interfaces,
+         ros-humble-action-msgs,
+         ros-humble-unique-identifier-msgs,
+         ros-humble-rosgraph-msgs,
+         ros-humble-example-interfaces,
+         ros-humble-test-msgs,
+         ros-humble-ament-index-python,
+         ros-humble-launch,
+         ros-humble-ros2launch,
+         python3
 Recommends: nvidia-utils
 Description: ROS 2 launch inspection tool with resource monitoring
  Records and replays ROS 2 launch file executions for performance analysis.

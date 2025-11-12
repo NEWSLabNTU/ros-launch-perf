@@ -27,6 +27,10 @@ override_dh_auto_build:
 	export PYTHONPATH="$(HOME)/.local/lib/python3.10/site-packages:$$PYTHONPATH"; \
 	git submodule update --init --recursive; \
 	just build
+	# Build Python wheels for proper packaging
+	mkdir -p wheels
+	cd src/dump_launch && python3 -m pip wheel --no-deps -w ../../wheels .
+	cd src/play_launch_analyzer && python3 -m pip wheel --no-deps -w ../../wheels .
 
 override_dh_auto_install:
 	# Install binaries
@@ -34,16 +38,17 @@ override_dh_auto_install:
 		debian/play-launch/usr/bin/play_launch
 	install -Dm755 install/play_launch/lib/play_launch/play_launch_io_helper \
 		debian/play-launch/usr/lib/play-launch/play_launch_io_helper
-	# Install Python packages
-	if [ -d install/dump_launch/lib/python3.10/site-packages/dump_launch ]; then \
+	# Install Python packages from wheels (includes proper metadata)
+	if [ -d wheels ]; then \
+		TEMP_VENV=$$(mktemp -d); \
+		python3 -m venv "$$TEMP_VENV"; \
+		"$$TEMP_VENV/bin/pip" install --no-deps wheels/*.whl; \
 		mkdir -p debian/play-launch/usr/lib/python3.10/dist-packages; \
-		cp -r install/dump_launch/lib/python3.10/site-packages/dump_launch \
+		cp -r "$$TEMP_VENV"/lib/python3.10/site-packages/* \
 			debian/play-launch/usr/lib/python3.10/dist-packages/; \
-	fi
-	if [ -d install/play_launch_analyzer/lib/python3.10/site-packages/play_launch_analyzer ]; then \
-		mkdir -p debian/play-launch/usr/lib/python3.10/dist-packages; \
-		cp -r install/play_launch_analyzer/lib/python3.10/site-packages/play_launch_analyzer \
-			debian/play-launch/usr/lib/python3.10/dist-packages/; \
+		rm -rf debian/play-launch/usr/lib/python3.10/dist-packages/{_virtualenv.*,pip*,setuptools*,pkg_resources,distutils-precedence.pth}; \
+		find debian/play-launch/usr/lib/python3.10/dist-packages -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true; \
+		rm -rf "$$TEMP_VENV"; \
 	fi
 	# Install Python scripts
 	if [ -f install/dump_launch/lib/dump_launch/dump_launch ]; then \
@@ -54,11 +59,30 @@ override_dh_auto_install:
 		install -Dm755 install/play_launch_analyzer/lib/play_launch_analyzer/play_launch_analyzer \
 			debian/play-launch/usr/bin/play_launch_analyzer; \
 	fi
+	# Install ROS2 package metadata for dump_launch
+	if [ -d install/dump_launch ]; then \
+		install -Dm644 install/dump_launch/share/dump_launch/package.xml \
+			debian/play-launch/opt/ros/humble/share/dump_launch/package.xml; \
+		mkdir -p debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages; \
+		touch debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages/dump_launch; \
+		mkdir -p debian/play-launch/opt/ros/humble/lib/dump_launch; \
+		ln -sf /usr/bin/dump_launch \
+			debian/play-launch/opt/ros/humble/lib/dump_launch/dump_launch; \
+	fi
+	# Install ROS2 package metadata for play_launch_analyzer
+	if [ -d install/play_launch_analyzer ]; then \
+		install -Dm644 install/play_launch_analyzer/share/play_launch_analyzer/package.xml \
+			debian/play-launch/opt/ros/humble/share/play_launch_analyzer/package.xml; \
+		touch debian/play-launch/opt/ros/humble/share/ament_index/resource_index/packages/play_launch_analyzer; \
+		mkdir -p debian/play-launch/opt/ros/humble/lib/play_launch_analyzer; \
+		ln -sf /usr/bin/play_launch_analyzer \
+			debian/play-launch/opt/ros/humble/lib/play_launch_analyzer/play_launch_analyzer; \
+	fi
 	# Install docs
 	install -Dm644 README.md debian/play-launch/usr/share/doc/play-launch/README.md
 	install -Dm644 CLAUDE.md debian/play-launch/usr/share/doc/play-launch/CLAUDE.md
 	if [ -d docs ]; then \
-		cp -r docs/* debian/play-launch/usr/share/doc/play-launch/; \
+		cp -r docs/* debian/play-launch/usr/share/doc/play-launch/ 2>/dev/null || true; \
 	fi
 	# Install examples
 	if [ -d test ]; then \
@@ -67,5 +91,5 @@ override_dh_auto_install:
 	fi
 
 override_dh_auto_clean:
-	rm -rf build install log .cargo build_logs debian/home
+	rm -rf build install log .cargo build_logs debian/home wheels
 	dh_auto_clean
