@@ -54,8 +54,16 @@ play_launch --help
 **Prerequisites:**
 
 - **ROS 2** (Humble or later)
-- **Rust toolchain**: Install from [rustup.rs](https://rustup.rs/)
+- **Rust toolchain**: Install from [rustup.rs](https://rustup.rs/), or running
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
 - **Python 3** with pip
+- **Plot, Pandas** running 
+```bash
+pip3 install pandas plotly
+```
 
 **Installation Steps:**
 
